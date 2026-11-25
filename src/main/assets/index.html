@@ -1,0 +1,103 @@
+<!doctype html><html lang="tr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-src 'none'; base-uri 'none'; form-action 'none'"><title>Görsel arama</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f6f7fb;color:#18273e;font:16px Roboto,system-ui,sans-serif}
+main{max-width:900px;margin:auto;padding:20px 14px 50px}h1{font-size:28px;margin:4px 0 16px}
+form,.tools,footer,header{display:flex;gap:8px;align-items:center}input:not([type=checkbox]){width:100%;min-width:0;padding:12px;border:1px solid #aab6c8;border-radius:10px;font:inherit}
+button{font:inherit;cursor:pointer;background:#214f85;color:white;border:0;border-radius:10px;padding:10px 13px;min-height:44px}button:disabled{opacity:.55}
+details{margin:12px 0}summary{cursor:pointer;color:#365477}.tools{flex-wrap:wrap;margin:14px 0}.tools button:first-child{background:#e1e9f4;color:#18324a}
+#more{margin:18px auto;display:block}#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(148px,46%),1fr));gap:10px}
+article{min-width:0;background:white;border:1px solid #dbe2eb;border-radius:14px;overflow:hidden}
+.photo{display:block;width:100%;padding:0;border-radius:0;background:#e6ecf1;color:#213147}.photo img{width:100%;height:145px;display:block;object-fit:cover}
+article p{margin:9px;font-size:13px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+footer{justify-content:space-between;padding:0 8px 8px}label{display:flex;align-items:center;min-height:44px;font-size:14px}input[type=checkbox]{width:19px;height:19px;accent-color:#214f85}
+dialog{max-width:min(94vw,850px);border:0;border-radius:14px;padding:12px}dialog::backdrop{background:#101824cc}dialog img{display:block;max-width:100%;width:auto;max-height:68vh;margin:auto;object-fit:contain}header{justify-content:space-between;margin-bottom:8px}#message,#errors{overflow-wrap:anywhere}#errors{white-space:pre-line;color:#823926}
+</style><main><h1>Image Downloader</h1>
+<label for="engine">Arama motoru</label>
+<select id="engine" style="width:100%;font:inherit;padding:10px;border-radius:10px;margin-bottom:12px">
+<option value="bing">Bing Görseller</option><option value="yandex">Yandex Görsel</option><option value="google">Google Görseller</option></select>
+<form id="form"><input id="query" type="search" placeholder="Görsel ara" aria-label="Arama" maxlength="256" required><button id="go">Ara</button></form>
+<label><input id="fallback" type="checkbox" checked>Seçilen motor sonuç vermezse Wikimedia Commons’ta ara</label>
+<a id="openEngine"  rel="noopener noreferrer" hidden>Aramayı tarayıcıda aç</a>
+<details id="apiOptions" hidden><summary>Alternatif arama · SerpApi</summary><p>Google doğrudan sonuç vermezse kendi SerpApi anahtarını girip tekrar ara. Alan doluyken arama SerpApi üzerinden yapılır.</p><input id="apiKey" type="password" placeholder="SerpApi anahtarı" aria-label="SerpApi anahtarı" autocomplete="off"></details>
+<div class="tools" id="tools" hidden><button id="all">Tümünü seç</button><button id="batch">Seçilenleri indir</button></div>
+<p id="message" role="status"></p><p id="errors" role="alert"></p><section id="grid"></section><button id="more" hidden>Daha fazla göster</button>
+<dialog id="preview"><header><strong>Önizleme</strong><button id="closePreview">Kapat</button></header><img id="large" alt="Görsel önizlemesi"><p id="caption"></p><button id="savePreview">İndir</button></dialog></main>
+<style>[hidden]{display:none!important}</style><script>
+const el=id=>document.getElementById(id);
+const selected=new Set(), cards=new Map();
+let current=null,busy=false;
+let sequence=0, searchState=null, nextPage=0, hasMore=false;
+const pending=new Map();
+function api(action,data){
+ return new Promise((resolve,reject)=>{
+  const id=++sequence;pending.set(id,{resolve,reject});
+  Gallery.request(id,action,JSON.stringify(data));
+ });
+}
+window.galleryReply=(id,json)=>{
+ const task=pending.get(id);if(!task)return;pending.delete(id);
+ const result=JSON.parse(json);
+ if(result.error)task.reject(new Error(result.error));else task.resolve(result);
+};
+function refresh(){
+ el('more').hidden=!hasMore;el('more').disabled=busy;el('engine').disabled=busy;el('tools').hidden=!cards.size;el('go').disabled=busy;
+ el('batch').disabled=busy||!selected.size;el('all').disabled=busy;
+ el('all').textContent=selected.size===cards.size?'Seçimi kaldır':'Tümünü seç';
+ el('batch').textContent='Seçilenleri indir ('+selected.size+')';
+ for(const [id,c] of cards){c.check.checked=selected.has(id);c.check.disabled=busy;c.save.disabled=busy;}
+ el('savePreview').disabled=busy;
+}
+function show(item){
+ current=item;const img=el('large');el('caption').textContent=item.title;
+ img.onerror=()=>{img.onerror=null;img.src=item.thumb;el('caption').textContent=item.title+' · Küçük önizleme';};
+ img.src=item.url;el('preview').showModal();
+}
+function card(item){
+ const a=document.createElement('article');
+ a.innerHTML='<button class="photo" aria-label="Önizlemeyi aç"><img loading="lazy" referrerpolicy="no-referrer"></button><p></p><footer><label><input type="checkbox">Seç</label><button>İndir</button></footer>';
+ const img=a.querySelector('img');img.alt=item.title;img.src=item.thumb;
+ a.querySelector('.photo').onclick=()=>show(item);a.querySelector('p').textContent=item.title;
+ const check=a.querySelector('input'),save=a.querySelector('footer button');
+ check.onchange=()=>{if(check.checked)selected.add(item.id);else selected.delete(item.id);refresh();};
+ save.onclick=()=>downloads([item.id]);cards.set(item.id,{item,check,save});el('grid').append(a);
+}
+async function downloads(ids){
+ if(busy)return;busy=true;refresh();el('errors').textContent='';let saved=0;
+ for(const [i,id] of ids.entries()){
+  el('message').textContent='İndiriliyor · '+(i+1)+' / '+ids.length;
+  try{await api('save',{id});saved++;selected.delete(id);cards.get(id).save.textContent='İndirildi';}
+  catch(e){el('errors').textContent+=cards.get(id).item.title+' — '+e.message+'\n';}
+ }
+ el('message').textContent=saved+' / '+ids.length+' görsel kaydedildi · Download/Google';busy=false;refresh();
+}
+el('form').onsubmit=async e=>{
+ e.preventDefault();if(busy||!el('query').value.trim())return;busy=true;refresh();
+ const engine=el('engine').value;
+ el('message').textContent=el('engine').selectedOptions[0].textContent+' aranıyor…';el('errors').textContent='';
+ const q=el('query').value.trim();
+ const urls={google:'https://www.google.com/search?udm=2&q=',bing:'https://www.bing.com/images/search?q=',yandex:'https://yandex.com/images/search?text='};
+ el('openEngine').href=urls[engine]+encodeURIComponent(q);el('openEngine').hidden=false;
+ cards.clear();selected.clear();el('grid').replaceChildren();refresh();
+ searchState={q,engine,key:engine==='google'?el('apiKey').value.trim():'',commons:el('fallback').checked};
+ nextPage=0;hasMore=false;await loadPage();
+};
+async function loadPage(){
+ busy=true;refresh();el('errors').textContent='';
+ try {
+  const result=await api('search',{...searchState,page:nextPage});
+  const before=cards.size;
+  for(const item of result.rows)if(!cards.has(item.id))card(item);
+  hasMore=result.more&&cards.size>before;nextPage++;
+  el('message').textContent=[result.notice,result.source+' · '+cards.size+' görsel',cards.size===before?'Başka sonuç bulunamadı.':''].filter(Boolean).join(' ');
+ } catch(e){el('errors').textContent=e.message;el('message').textContent=cards.size?cards.size+' görsel':'Arama tamamlanamadı.';}
+ finally{busy=false;refresh();}
+}
+el('more').onclick=loadPage;
+el('engine').onchange=()=>{el('apiOptions').hidden=el('engine').value!=='google';el('openEngine').hidden=true;};
+el('all').onclick=()=>{if(selected.size===cards.size)selected.clear();else for(const id of cards.keys())selected.add(id);refresh();};
+el('batch').onclick=()=>downloads([...selected]);
+el('closePreview').onclick=()=>el('preview').close();
+el('savePreview').onclick=()=>{el('preview').close();downloads([current.id]);};
+refresh();
+</script></html>
