@@ -1,5 +1,7 @@
 name: Android APK
 on: [push, workflow_dispatch]
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -13,7 +15,10 @@ jobs:
         with:
           gradle-version: '8.9'
       - run: gradle assembleDebug
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Image-Downloader
-          path: build/outputs/apk/debug/*.apk
+      - name: Publish installable APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp build/outputs/apk/debug/*.apk Image-Downloader.apk
+          tag="build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          gh release create "$tag" Image-Downloader.apk --target "$GITHUB_SHA" --title "Image Downloader • Build ${GITHUB_RUN_NUMBER}" --notes "Android 10+"
