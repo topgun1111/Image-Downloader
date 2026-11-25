@@ -46,6 +46,22 @@ jobs:
           "$tools/apksigner" sign --key "$RUNNER_TEMP/signer.pk8" --cert "$RUNNER_TEMP/signer.der" --out Image-Downloader.apk "$RUNNER_TEMP/aligned.apk"
           "$tools/apksigner" verify --verbose --print-certs Image-Downloader.apk
           "$tools/aapt" dump badging Image-Downloader.apk | grep -F "package: name='app.imagedownloader' versionCode='$COUNT' versionName='$VERSION'"
+      - name: Check compatibility with the previous signed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          previous=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          if [[ "$previous" != v* ]]; then exit 0; fi
+          mkdir "$RUNNER_TEMP/previous"
+          gh release download "$previous" -p Image-Downloader.apk -D "$RUNNER_TEMP/previous"
+          tools="$ANDROID_HOME/build-tools/35.0.0"
+          cert() { "$tools/apksigner" verify --print-certs "$1" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p'; }
+          old="$RUNNER_TEMP/previous/Image-Downloader.apk"
+          current_cert=$(cert Image-Downloader.apk)
+          test -n "$current_cert" && test "$current_cert" = "$(cert "$old")"
+          old_code=$("$tools/aapt" dump badging "$old" | awk -F"'" '/^package:/{print $4}')
+          if [[ "$previous" == "v$VERSION" ]]; then test "$COUNT" -eq "$old_code"; else test "$COUNT" -gt "$old_code"; fi
       - name: Publish to Releases and verify private download
         env:
           GH_TOKEN: ${{ github.token }}
@@ -59,3 +75,37 @@ jobs:
           gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$asset" > "$RUNNER_TEMP/published.apk"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$RUNNER_TEMP/published.apk"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$RUNNER_TEMP/published.apk" | grep -F "versionCode='$COUNT' versionName='$VERSION'"
+  test-update:
+    if: contains(github.event.head_commit.message, '[test-update]')
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch preceding signed APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          releases=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30")
+          tag=$(jq -er '[.[] | select(.draft==false and .prerelease==false and (.tag_name|startswith("v")))] | .[0].tag_name' <<< "$releases")
+          previous=$(jq -er '[.[] | select(.draft==false and .prerelease==false and (.tag_name|startswith("v")))] | .[1].tag_name' <<< "$releases")
+          mkdir "$RUNNER_TEMP/previous"
+          gh release download "$previous" -p Image-Downloader.apk -D "$RUNNER_TEMP/previous"
+          echo "VERSION=${tag#v}" >> "$GITHUB_ENV"
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Exercise in-place update from the preceding release
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          REPO_READ_TOKEN: ${{ github.token }}
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: python3 ci/test-update.py
