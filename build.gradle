@@ -16,6 +16,8 @@ android {
     packaging { resources.excludes += ['META-INF/versions/**', 'META-INF/DEPENDENCIES'] }
 }
 dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
     implementation 'org.jsoup:jsoup:1.18.3'
     implementation 'androidx.core:core:1.13.1'
 }

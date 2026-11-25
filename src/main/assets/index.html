@@ -78,7 +78,7 @@ el('form').onsubmit=async e=>{
  el('message').textContent=el('engine').selectedOptions[0].textContent+' aranıyor…';el('errors').textContent='';
  const q=el('query').value.trim(), pinterest=el('pinterest').checked;
  const urls={google:'https://www.google.com/search?udm=2&q=',bing:'https://www.bing.com/images/search?q=',yandex:'https://yandex.com/images/search?text='};
- el('openEngine').href=urls[engine]+encodeURIComponent(pinterest?'site:pinterest.com '+q:q);el('openEngine').hidden=false;
+ el('openEngine').href=urls[engine]+encodeURIComponent(pinterest?(engine==='bing'?q+' Pinterest':q+' site:pinterest.com'):q);el('openEngine').hidden=false;
  cards.clear();selected.clear();el('grid').replaceChildren();refresh();
  searchState={q,engine,pinterest,key:engine==='google'?el('apiKey').value.trim():'',commons:!pinterest&&el('fallback').checked};
  nextPage=0;hasMore=false;await loadPage();

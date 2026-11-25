@@ -38,7 +38,7 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "COUNT=$count" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          gradle assembleRelease -PcommitCount="$count" -PappVersion="$version"
+          gradle testReleaseUnitTest assembleRelease -PcommitCount="$count" -PappVersion="$version"
       - name: Sign and verify installable release
         env:
           ANDROID_RELEASE_KEY_PEM: ${{ secrets.ANDROID_RELEASE_KEY_PEM }}
