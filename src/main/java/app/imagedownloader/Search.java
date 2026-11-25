@@ -110,7 +110,11 @@ final class Search {
         int page=req.optInt("page",0);
         if(q.isEmpty()||q.length()>256||page<0||page>10000) throw new IOException("Geçersiz arama.");
         boolean pinterest=req.optBoolean("pinterest",false);
-        String term=pinterest?"site:pinterest.com "+q:q;
+        String term=q;
+        if (pinterest) {
+            // Bing Images ignores site: for some queries. Verify the origin of each result below.
+            term=engine.equals("bing")?q+" Pinterest":"site:pinterest.com "+q;
+        }
         String url=endpoint(engine,term,page), key=req.optString("key");
         Map<String,JSONObject> rows=new LinkedHashMap<>();
         String source=engine.equals("bing")?"Bing Görseller":engine.equals("yandex")?"Yandex Görsel":"Google Görseller";
