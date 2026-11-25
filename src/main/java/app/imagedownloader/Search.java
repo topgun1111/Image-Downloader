@@ -43,14 +43,29 @@ final class Search {
         rows.put(url,new JSONObject().put("url",url).put("thumb",web(thumb)?thumb:url)
                 .put("title",title.isEmpty()?android.net.Uri.parse(url).getHost():title));
     }
-    static void yandex(Object node,Map<String,JSONObject> rows) throws JSONException {
+    static boolean pinterestHost(String url) {
+        if (url==null || !web(url)) return false;
+        try {
+            String host=new URL(url).getHost().toLowerCase(Locale.ROOT);
+            return host.equals("pinterest.com") || host.endsWith(".pinterest.com")
+                    || host.equals("pinimg.com") || host.endsWith(".pinimg.com");
+        } catch (MalformedURLException e) { return false; }
+    }
+    static void addResult(Map<String,JSONObject> rows, boolean pinterest, String pageUrl,
+                          String original, String thumb, String title) throws JSONException {
+        if (!pinterest || pinterestHost(pageUrl) || pinterestHost(original)) add(rows,original,thumb,title);
+    }
+    static void yandex(Object node,Map<String,JSONObject> rows,boolean pinterest) throws JSONException {
         if (node instanceof JSONArray) {
             JSONArray a=(JSONArray)node;
-            for (int i=0;i<a.length();i++) yandex(a.get(i),rows);
+            for (int i=0;i<a.length();i++) yandex(a.get(i),rows,pinterest);
         } else if (node instanceof JSONObject) {
             JSONObject o=(JSONObject)node;
-            if (o.has("origUrl")) add(rows,o.optString("origUrl"),o.optString("image"),o.optString("alt"));
-            else for (Iterator<String> it=o.keys();it.hasNext();) yandex(o.get(it.next()),rows);
+            if (o.has("origUrl")) {
+                JSONObject snippet=o.optJSONObject("snippet");
+                addResult(rows,pinterest,snippet==null?"":snippet.optString("url"),o.optString("origUrl"),o.optString("image"),o.optString("alt"));
+            }
+            else for (Iterator<String> it=o.keys();it.hasNext();) yandex(o.get(it.next()),rows,pinterest);
         }
     }
     static String endpoint(String engine,String q,int page) throws IOException {
@@ -62,31 +77,31 @@ final class Search {
             default: throw new IOException("Geçersiz arama motoru.");
         }
     }
-    static void parse(String engine,String html,Map<String,JSONObject> rows) throws JSONException {
+    static void parse(String engine,String html,Map<String,JSONObject> rows,boolean pinterest) throws JSONException {
         Document doc=Jsoup.parse(html);
         if (engine.equals("bing")) {
             for (Element e:doc.select("a[m]")) {
                 try {
                     JSONObject o=new JSONObject(e.attr("m"));
-                    add(rows,o.optString("murl"),o.optString("turl"),o.optString("t"));
+                    addResult(rows,pinterest,o.optString("purl"),o.optString("murl"),o.optString("turl"),o.optString("t"));
                 } catch(JSONException ignored) {}
             }
         } else if (engine.equals("yandex")) {
             for (String field:new String[]{"data-state","data-bem"})
                 for (Element e:doc.select("["+field+"]"))
-                    try { yandex(new JSONTokener(e.attr(field)).nextValue(),rows); } catch(JSONException ignored) {}
+                    try { yandex(new JSONTokener(e.attr(field)).nextValue(),rows,pinterest); } catch(JSONException ignored) {}
         } else {
             for (Element a:doc.select("a[href*=imgurl],a[href*=mediaurl]")) {
                 android.net.Uri u=android.net.Uri.parse(a.attr("href"));
                 String orig=u.getQueryParameter("imgurl");
                 if (orig==null) orig=u.getQueryParameter("mediaurl");
                 Element img=a.selectFirst("img");
-                if(orig!=null) add(rows,orig,img==null?"":img.attr("src"),img==null?"":img.attr("alt"));
+                if(orig!=null) addResult(rows,pinterest,u.getQueryParameter("imgrefurl"),orig,img==null?"":img.attr("src"),img==null?"":img.attr("alt"));
             }
             Matcher m=GOOGLE_PAIR.matcher(html);
             while(m.find()) try {
                 String thumb=(String)new JSONTokener(m.group(1)).nextValue();
-                if (thumb.contains(".gstatic.com/")) add(rows,(String)new JSONTokener(m.group(2)).nextValue(),thumb,"");
+                if (thumb.contains(".gstatic.com/")) addResult(rows,pinterest,"",(String)new JSONTokener(m.group(2)).nextValue(),thumb,"");
             } catch(JSONException ignored) {}
         }
     }
@@ -94,28 +109,31 @@ final class Search {
         String engine=req.getString("engine"),q=req.getString("q").trim();
         int page=req.optInt("page",0);
         if(q.isEmpty()||q.length()>256||page<0||page>10000) throw new IOException("Geçersiz arama.");
-        String url=endpoint(engine,q,page), key=req.optString("key");
+        boolean pinterest=req.optBoolean("pinterest",false);
+        String term=pinterest?"site:pinterest.com "+q:q;
+        String url=endpoint(engine,term,page), key=req.optString("key");
         Map<String,JSONObject> rows=new LinkedHashMap<>();
         String source=engine.equals("bing")?"Bing Görseller":engine.equals("yandex")?"Yandex Görsel":"Google Görseller";
+        if(pinterest) source+=" · Pinterest";
         String notice="";
         boolean more=!engine.equals("google");
         try {
             if(engine.equals("google")&&!key.isEmpty()){
-                JSONObject data=new JSONObject(read("https://serpapi.com/search.json?engine=google_images&hl=tr&gl=tr&q="+enc(q)+"&api_key="+enc(key)));
+                JSONObject data=new JSONObject(read("https://serpapi.com/search.json?engine=google_images&hl=tr&gl=tr&q="+enc(term)+"&api_key="+enc(key)));
                 if(data.has("error")) throw new IOException("SerpApi anahtarını ve kotayı kontrol edin.");
                 JSONArray a=data.optJSONArray("images_results");
                 if(a!=null) for(int i=0;i<a.length();i++){
-                    JSONObject o=a.getJSONObject(i);add(rows,o.optString("original"),o.optString("thumbnail"),o.optString("title"));
+                    JSONObject o=a.getJSONObject(i);addResult(rows,pinterest,o.optString("link"),o.optString("original"),o.optString("thumbnail"),o.optString("title"));
                 }
             } else {
                 String html=read(url);
-                parse(engine,html,rows);
+                parse(engine,html,rows,pinterest);
                 if(rows.isEmpty() && (html.contains("showcaptcha") || html.contains("captcha-container") || html.contains("SmartCaptcha")))
                     throw new IOException("Arama motoru doğrulama istedi. Daha sonra tekrar deneyin.");
             }
             if(page==0 && rows.isEmpty()) throw new IOException("Görsel bağlantısı bulunamadı.");
         } catch(Exception err) {
-            if(page!=0 || !req.optBoolean("commons") || !key.isEmpty()) throw new IOException(source+" araması tamamlanamadı. "+safeError(err));
+            if(pinterest || page!=0 || !req.optBoolean("commons") || !key.isEmpty()) throw new IOException(source+" araması tamamlanamadı. "+safeError(err));
             notice=source+" sonuç vermedi.";source="Wikimedia Commons";more=false;rows.clear();
             JSONObject data=new JSONObject(read("https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrlimit=20&prop=imageinfo&iiprop=url%7Cmime&iiurlwidth=320&format=json&gsrsearch="+enc(q+" filetype:bitmap")));
             if(data.has("error")) throw new IOException("Wikimedia araması tamamlanamadı.");

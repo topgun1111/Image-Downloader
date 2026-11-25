@@ -16,8 +16,9 @@ dialog{max-width:min(94vw,850px);border:0;border-radius:14px;padding:12px}dialog
 <label for="engine">Arama motoru</label>
 <select id="engine" style="width:100%;font:inherit;padding:10px;border-radius:10px;margin-bottom:12px">
 <option value="bing">Bing Görseller</option><option value="yandex">Yandex Görsel</option><option value="google">Google Görseller</option></select>
+<label><input type="checkbox" id="pinterest">Pinterest üzerinde ara</label>
 <form id="form"><input id="query" type="search" placeholder="Görsel ara" aria-label="Arama" maxlength="256" required><button id="go">Ara</button></form>
-<label><input id="fallback" type="checkbox" checked>Seçilen motor sonuç vermezse Wikimedia Commons’ta ara</label>
+<label id="fallbackLabel"><input id="fallback" type="checkbox" checked>Seçilen motor sonuç vermezse Wikimedia Commons’ta ara</label>
 <a id="openEngine"  rel="noopener noreferrer" hidden>Aramayı tarayıcıda aç</a>
 <details id="apiOptions" hidden><summary>Alternatif arama · SerpApi</summary><p>Google doğrudan sonuç vermezse kendi SerpApi anahtarını girip tekrar ara. Alan doluyken arama SerpApi üzerinden yapılır.</p><input id="apiKey" type="password" placeholder="SerpApi anahtarı" aria-label="SerpApi anahtarı" autocomplete="off"></details>
 <div class="tools" id="tools" hidden><button id="all">Tümünü seç</button><button id="batch">Seçilenleri indir</button></div>
@@ -41,7 +42,7 @@ window.galleryReply=(id,json)=>{
  if(result.error)task.reject(new Error(result.error));else task.resolve(result);
 };
 function refresh(){
- el('more').hidden=!hasMore;el('more').disabled=busy;el('engine').disabled=busy;el('tools').hidden=!cards.size;el('go').disabled=busy;
+ el('more').hidden=!hasMore;el('more').disabled=busy;el('engine').disabled=busy;el('pinterest').disabled=busy;el('tools').hidden=!cards.size;el('go').disabled=busy;
  el('batch').disabled=busy||!selected.size;el('all').disabled=busy;
  el('all').textContent=selected.size===cards.size?'Seçimi kaldır':'Tümünü seç';
  el('batch').textContent='Seçilenleri indir ('+selected.size+')';
@@ -75,11 +76,11 @@ el('form').onsubmit=async e=>{
  e.preventDefault();if(busy||!el('query').value.trim())return;busy=true;refresh();
  const engine=el('engine').value;
  el('message').textContent=el('engine').selectedOptions[0].textContent+' aranıyor…';el('errors').textContent='';
- const q=el('query').value.trim();
+ const q=el('query').value.trim(), pinterest=el('pinterest').checked;
  const urls={google:'https://www.google.com/search?udm=2&q=',bing:'https://www.bing.com/images/search?q=',yandex:'https://yandex.com/images/search?text='};
- el('openEngine').href=urls[engine]+encodeURIComponent(q);el('openEngine').hidden=false;
+ el('openEngine').href=urls[engine]+encodeURIComponent(pinterest?'site:pinterest.com '+q:q);el('openEngine').hidden=false;
  cards.clear();selected.clear();el('grid').replaceChildren();refresh();
- searchState={q,engine,key:engine==='google'?el('apiKey').value.trim():'',commons:el('fallback').checked};
+ searchState={q,engine,pinterest,key:engine==='google'?el('apiKey').value.trim():'',commons:!pinterest&&el('fallback').checked};
  nextPage=0;hasMore=false;await loadPage();
 };
 async function loadPage(){
@@ -94,6 +95,7 @@ async function loadPage(){
  finally{busy=false;refresh();}
 }
 el('more').onclick=loadPage;
+el('pinterest').onchange=()=>{el('fallbackLabel').hidden=el('pinterest').checked;el('openEngine').hidden=true;};
 el('engine').onchange=()=>{el('apiOptions').hidden=el('engine').value!=='google';el('openEngine').hidden=true;};
 el('all').onclick=()=>{if(selected.size===cards.size)selected.clear();else for(const id of cards.keys())selected.add(id);refresh();};
 el('batch').onclick=()=>downloads([...selected]);
