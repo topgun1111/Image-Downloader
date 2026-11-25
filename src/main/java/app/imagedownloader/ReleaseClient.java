@@ -17,13 +17,13 @@ final class ReleaseClient {
     private static final String API="https://api.github.com/repos/topgun1111/Image-Downloader/releases";
     private static final Pattern TAG=Pattern.compile("v[0-9]+\\.[0-9]+\\.([0-9]+)-[0-9a-f]{8,40}");
     private static final int MAX_APK=128*1024*1024;
-    final String token;
-    ReleaseClient(String token){ this.token=token; }
+    private static final String DOWNLOAD="https://github.com/topgun1111/Image-Downloader/releases/download/";
+    ReleaseClient(){}
 
     static final class Release {
         final int code;
-        final long asset,size;
-        final String name,digest;
+        final long size;
+        final String name,digest,downloadUrl;
         Release(JSONObject json) throws Exception {
             String tag=json.getString("tag_name");
             Matcher m=TAG.matcher(tag);
@@ -37,8 +37,9 @@ final class ReleaseClient {
                 if("Image-Downloader.apk".equals(a.optString("name")) && "uploaded".equals(a.optString("state"))) apk=a;
             }
             if(apk==null)throw new IOException("Sürümün APK dosyası henüz hazır değil.");
-            asset=apk.getLong("id");size=apk.getLong("size");digest=apk.optString("digest");
-            if(asset<=0||size<=0||size>MAX_APK||!digest.matches("sha256:[a-fA-F0-9]{64}"))
+            size=apk.getLong("size");digest=apk.optString("digest");
+            downloadUrl=DOWNLOAD+tag+"/Image-Downloader.apk";
+            if(!downloadUrl.equals(apk.optString("browser_download_url"))||size<=0||size>MAX_APK||!digest.matches("sha256:[a-fA-F0-9]{64}"))
                 throw new IOException("Yayınlanan APK bilgileri doğrulanamadı.");
         }
     }
@@ -51,14 +52,15 @@ final class ReleaseClient {
             c.setConnectTimeout(15000);c.setReadTimeout(30000);
             c.setRequestProperty("User-Agent","Image-Downloader-Android");
             c.setRequestProperty("Accept",binary?"application/octet-stream":"application/vnd.github+json");
-            if("api.github.com".equals(url.getHost()) && !token.isEmpty()) c.setRequestProperty("Authorization","Bearer "+token);
             try {
                 int status=c.getResponseCode();
                 if(status==200)return c;
                 if(status>=300 && status<400 && c.getHeaderField("Location")!=null){
                     url=new URL(url,c.getHeaderField("Location"));c.disconnect();continue;
                 }
-                if(status==401||status==403||status==404)throw new IOException("GitHub erişimi sağlanamadı (HTTP "+status+"). Anahtarın bu depoda Contents: Read yetkisini ve kotasını kontrol edin.");
+                if(status==404)throw new IOException("Sürüm bulunamadı. GitHub deposunun herkese açık olduğundan emin olun.");
+                if(status==403||status==429)throw new IOException("GitHub erişim sınırına ulaşıldı. Bir süre sonra tekrar deneyin.");
+                if(status==401)throw new IOException("GitHub anonim erişime izin vermedi.");
                 throw new IOException("GitHub HTTP "+status+" yanıtını verdi.");
             }catch(IOException e){c.disconnect();throw e;}
         }
@@ -85,7 +87,7 @@ final class ReleaseClient {
         File dir=directory(context),temp=File.createTempFile("download-",".part",dir);
         try {
             MessageDigest md=MessageDigest.getInstance("SHA-256");
-            HttpURLConnection c=connect(API+"/assets/"+release.asset,true);
+            HttpURLConnection c=connect(release.downloadUrl,true);
             try(InputStream in=c.getInputStream();OutputStream out=new FileOutputStream(temp)){
                 byte[] b=new byte[65536];int n,last=-1;long size=0;
                 while((n=in.read(b))!=-1){

@@ -12,7 +12,7 @@ def adb(*args):
     return subprocess.check_output(["adb", *args], text=True, timeout=45)
 
 
-def tap(label, *, resource=False, timeout=75):
+def tap(label, *, resource=False, timeout=75, click=True, optional=False):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -25,11 +25,14 @@ def tap(label, *, resource=False, timeout=75):
                     match = any(node.get(k, "").casefold() == label.casefold() for k in ("text", "content-desc", "class"))
                 if match and node.get("enabled") == "true":
                     left, top, right, bottom = map(int, re.findall(r"\d+", node.get("bounds")))
-                    adb("shell", "input", "tap", str((left+right)//2), str((top+bottom)//2))
-                    return
+                    if click:
+                        adb("shell", "input", "tap", str((left+right)//2), str((top+bottom)//2))
+                    return True
         except (ValueError, ET.ParseError, subprocess.SubprocessError):
             pass
         time.sleep(1)
+    if optional:
+        return False
     raise RuntimeError("Expected Android control did not appear: " + label)
 
 
@@ -38,22 +41,27 @@ adb("install", old)
 adb("shell", "appops", "set", PACKAGE, "REQUEST_INSTALL_PACKAGES", "allow")
 adb("shell", "am", "start", "-n", PACKAGE + "/.MainActivity")
 tap("Ayarlar")
-tap("android.widget.EditText")
-# Input is sent only to the masked field of our own app on this disposable emulator.
-result = subprocess.run(["adb", "shell", "input", "text", os.environ["REPO_READ_TOKEN"]],
-                        capture_output=True, timeout=30)
-if result.returncode:
-    raise RuntimeError("Could not enter the test repository credential")
-adb("shell", "input", "keyevent", "4")
-tap("Güncellemeleri kontrol et")
-tap("İndir ve kur")
-tap("android:id/button1", resource=True)
-deadline = time.monotonic() + 90
-while time.monotonic() < deadline:
-    info = adb("shell", "dumpsys", "package", PACKAGE)
-    if "versionName=" + os.environ["VERSION"] + "\n" in info:
-        print("PASS: prior release found, downloaded and installed the private release through Settings")
-        break
-    time.sleep(1)
+# The first key-free release needs a one-time manual migration from the old updater.
+# Future releases exercise the full anonymous in-app installation path.
+if tap("android.widget.EditText", timeout=8, click=False, optional=True):
+    adb("install", "-r", os.path.join(os.environ["RUNNER_TEMP"], "current.apk"))
+    adb("shell", "am", "start", "-n", PACKAGE + "/.MainActivity")
+    tap("Ayarlar")
+    if tap("android.widget.EditText", timeout=5, click=False, optional=True):
+        raise RuntimeError("Access-key field remains after migration")
+    tap("Güncellemeleri kontrol et")
+    tap("Uygulama güncel.", click=False)
+    print("PASS: manual migration and anonymous update check; in-app install requires the next release")
 else:
-    raise RuntimeError("Android did not install the expected version")
+    tap("Güncellemeleri kontrol et")
+    tap("İndir ve kur")
+    tap("android:id/button1", resource=True)
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        info = adb("shell", "dumpsys", "package", PACKAGE)
+        if "versionName=" + os.environ["VERSION"] + "\n" in info:
+            print("PASS: preceding release downloaded and installed the public update through Settings")
+            break
+        time.sleep(1)
+    else:
+        raise RuntimeError("Android did not install the expected version")

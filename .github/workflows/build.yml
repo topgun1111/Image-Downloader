@@ -72,7 +72,7 @@ jobs:
           test -n "$current_cert" && test "$current_cert" = "$(cert "$old")"
           old_code=$("$tools/aapt" dump badging "$old" | awk -F"'" '/^package:/{print $4}')
           test "$COUNT" -gt "$old_code"
-      - name: Publish to Releases and verify private download
+      - name: Publish to Releases and verify download
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -85,8 +85,20 @@ jobs:
           gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$asset" > "$RUNNER_TEMP/published.apk"
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$RUNNER_TEMP/published.apk"
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$RUNNER_TEMP/published.apk" | grep -F "versionCode='$COUNT' versionName='$VERSION'"
+      - name: Verify anonymous public release access
+        if: github.event.repository.private == false
+        run: |
+          set -eu
+          url="https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest"
+          info=$(curl -fsSL --retry 3 "$url")
+          test "$(jq -r .tag_name <<< "$info")" = "v$VERSION"
+          apk_url=$(jq -er '.assets[] | select(.name=="Image-Downloader.apk") | .browser_download_url' <<< "$info")
+          digest=$(jq -er '.assets[] | select(.name=="Image-Downloader.apk") | .digest' <<< "$info")
+          curl -fsSL --retry 3 "$apk_url" -o "$RUNNER_TEMP/anonymous.apk"
+          echo "${digest#sha256:}  $RUNNER_TEMP/anonymous.apk" | sha256sum -c -
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$RUNNER_TEMP/anonymous.apk"
   test-update:
-    if: contains(github.event.head_commit.message, '[test-update]')
+    if: github.event.repository.private == false && (contains(github.event.head_commit.message, '[test-update]') || github.event_name == 'workflow_dispatch')
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -108,6 +120,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/previous"
           gh release download "$PREVIOUS_TAG" -p Image-Downloader.apk -D "$RUNNER_TEMP/previous"
           test -s "$RUNNER_TEMP/previous/Image-Downloader.apk"
+          curl -fsSL --retry 3 "https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/Image-Downloader.apk" -o "$RUNNER_TEMP/current.apk"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - name: Enable emulator acceleration
         run: |
@@ -116,8 +129,6 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Exercise in-place update from the preceding release
         uses: reactivecircus/android-emulator-runner@v2
-        env:
-          REPO_READ_TOKEN: ${{ github.token }}
         with:
           api-level: 30
           arch: x86_64
