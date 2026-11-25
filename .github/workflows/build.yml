@@ -1,24 +1,61 @@
-name: Android APK
-on: [push, workflow_dispatch]
+name: Android Release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
 permissions:
   contents: write
+concurrency:
+  group: image-downloader-release
+  cancel-in-progress: false
 jobs:
-  build:
+  release:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
-      - run: gradle assembleDebug
-      - name: Publish installable APK
+      - name: Install Gradle 8.9
+        run: |
+          curl -fsSL --retry 3 https://services.gradle.org/distributions/gradle-8.9-bin.zip -o "$RUNNER_TEMP/gradle.zip"
+          checksum=$(curl -fsSL --retry 3 https://services.gradle.org/distributions/gradle-8.9-bin.zip.sha256)
+          echo "$checksum  $RUNNER_TEMP/gradle.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/gradle-8.9/bin" >> "$GITHUB_PATH"
+      - name: Determine version and build release
+        run: |
+          count=$(git rev-list --count HEAD)
+          version="1.2.${count}-$(git rev-parse --short=8 HEAD)"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "COUNT=$count" >> "$GITHUB_ENV"
+          gradle assembleRelease -PcommitCount="$count" -PappVersion="$version"
+      - name: Sign and verify installable release
+        env:
+          ANDROID_RELEASE_KEY_PEM: ${{ secrets.ANDROID_RELEASE_KEY_PEM }}
+        run: |
+          set -eu
+          trap 'rm -f "$RUNNER_TEMP/signer.pk8" "$RUNNER_TEMP/signer.der"' EXIT
+          /usr/bin/python3 ci/release-signing.py
+          tools="$ANDROID_HOME/build-tools/35.0.0"
+          "$tools/zipalign" -f -P 16 4 build/outputs/apk/release/*-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+          "$tools/apksigner" sign --key "$RUNNER_TEMP/signer.pk8" --cert "$RUNNER_TEMP/signer.der" --out Image-Downloader.apk "$RUNNER_TEMP/aligned.apk"
+          "$tools/apksigner" verify --verbose --print-certs Image-Downloader.apk
+          "$tools/aapt" dump badging Image-Downloader.apk | grep -F "package: name='app.imagedownloader' versionCode='$COUNT' versionName='$VERSION'"
+      - name: Publish to Releases and verify private download
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp build/outputs/apk/debug/*.apk Image-Downloader.apk
-          tag="build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
-          gh release create "$tag" Image-Downloader.apk --target "$GITHUB_SHA" --title "Image Downloader • Build ${GITHUB_RUN_NUMBER}" --notes "Android 10+"
+          tag="v$VERSION"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" Image-Downloader.apk --target "$GITHUB_SHA" --title "Image Downloader $VERSION" --notes "Commit $GITHUB_SHA" --latest
+          fi
+          info=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag")
+          asset=$(jq -er '.assets[] | select(.name=="Image-Downloader.apk") | .id' <<< "$info")
+          gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$asset" > "$RUNNER_TEMP/published.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$RUNNER_TEMP/published.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$RUNNER_TEMP/published.apk" | grep -F "versionCode='$COUNT' versionName='$VERSION'"
