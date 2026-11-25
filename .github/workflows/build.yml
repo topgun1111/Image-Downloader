@@ -12,6 +12,9 @@ jobs:
   release:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      previous: ${{ steps.compatibility.outputs.previous }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,11 +31,13 @@ jobs:
           unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/gradle-8.9/bin" >> "$GITHUB_PATH"
       - name: Determine version and build release
+        id: version
         run: |
           count=$(git rev-list --count HEAD)
           version="1.2.${count}-$(git rev-parse --short=8 HEAD)"
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "COUNT=$count" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           gradle assembleRelease -PcommitCount="$count" -PappVersion="$version"
       - name: Sign and verify installable release
         env:
@@ -47,12 +52,17 @@ jobs:
           "$tools/apksigner" verify --verbose --print-certs Image-Downloader.apk
           "$tools/aapt" dump badging Image-Downloader.apk | grep -F "package: name='app.imagedownloader' versionCode='$COUNT' versionName='$VERSION'"
       - name: Check compatibility with the previous signed release
+        id: compatibility
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          previous=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
-          if [[ "$previous" != v* ]]; then exit 0; fi
+          previous=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -r --arg current "v$VERSION" '[.[][] | select(.draft==false and .prerelease==false and .tag_name!=$current and (.tag_name|test("^v[0-9]+[.][0-9]+[.][0-9]+-[0-9a-f]{8,40}$")) and any(.assets[]?; .name=="Image-Downloader.apk" and .state=="uploaded"))] | sort_by(.tag_name|split("-")[0]|split(".")[-1]|tonumber) | last | .tag_name // empty')
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+          if [[ -z "$previous" ]]; then
+            echo "No preceding signed release; establishing baseline."
+            exit 0
+          fi
           mkdir "$RUNNER_TEMP/previous"
           gh release download "$previous" -p Image-Downloader.apk -D "$RUNNER_TEMP/previous"
           tools="$ANDROID_HOME/build-tools/35.0.0"
@@ -61,7 +71,7 @@ jobs:
           current_cert=$(cert Image-Downloader.apk)
           test -n "$current_cert" && test "$current_cert" = "$(cert "$old")"
           old_code=$("$tools/aapt" dump badging "$old" | awk -F"'" '/^package:/{print $4}')
-          if [[ "$previous" == "v$VERSION" ]]; then test "$COUNT" -eq "$old_code"; else test "$COUNT" -gt "$old_code"; fi
+          test "$COUNT" -gt "$old_code"
       - name: Publish to Releases and verify private download
         env:
           GH_TOKEN: ${{ github.token }}
@@ -87,13 +97,18 @@ jobs:
       - name: Fetch preceding signed APK
         env:
           GH_TOKEN: ${{ github.token }}
+          PREVIOUS_TAG: ${{ needs.release.outputs.previous }}
+          VERSION: ${{ needs.release.outputs.version }}
         run: |
-          releases=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30")
-          tag=$(jq -er '[.[] | select(.draft==false and .prerelease==false and (.tag_name|startswith("v")))] | .[0].tag_name' <<< "$releases")
-          previous=$(jq -er '[.[] | select(.draft==false and .prerelease==false and (.tag_name|startswith("v")))] | .[1].tag_name' <<< "$releases")
-          mkdir "$RUNNER_TEMP/previous"
-          gh release download "$previous" -p Image-Downloader.apk -D "$RUNNER_TEMP/previous"
-          echo "VERSION=${tag#v}" >> "$GITHUB_ENV"
+          set -eu
+          if [[ -z "$PREVIOUS_TAG" || -z "$VERSION" ]]; then
+            echo "::error::The updater test requires a preceding signed APK and a target version."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/previous"
+          gh release download "$PREVIOUS_TAG" -p Image-Downloader.apk -D "$RUNNER_TEMP/previous"
+          test -s "$RUNNER_TEMP/previous/Image-Downloader.apk"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - name: Enable emulator acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
