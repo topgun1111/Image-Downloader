@@ -20,6 +20,7 @@ public final class MainActivity extends Activity {
     private final ConcurrentHashMap<Integer,SearchCancellation> searches=new ConcurrentHashMap<>();
     private WebView view;
     private VisualAI visual;
+    private final ThumbnailRecovery thumbnails=new ThumbnailRecovery();
     private final Set<Long> visualHashes=new LinkedHashSet<>();
     private int lastSearchSession=-1;
     private volatile PreparedShare preparedShare;
@@ -49,6 +50,11 @@ public final class MainActivity extends Activity {
                 if(PAGE.equals(req.getUrl().toString())){
                     try {return new WebResourceResponse("text/html","UTF-8",getAssets().open("index.html"));}
                     catch(IOException e){return new WebResourceResponse("text/plain","UTF-8",null);}
+                }
+                Uri uri=req.getUrl();
+                if("https".equals(uri.getScheme())&&"gallery.invalid".equals(uri.getHost())&&"/thumb".equals(uri.getPath())){
+                    String id=uri.getQueryParameter("id");
+                    return thumbnails.response(id==null?null:known.get(id));
                 }
                 return null;
             }
@@ -100,7 +106,7 @@ public final class MainActivity extends Activity {
                         answer=new JSONObject().put("installed",visual.installed());
                     } else if(action.equals("search")){
                         int session=req.optInt("session",-1);
-                        if(session>=0?session!=lastSearchSession:req.optInt("page",0)==0){known.clear();visualHashes.clear();lastSearchSession=session;}
+                        if(session>=0?session!=lastSearchSession:req.optInt("page",0)==0){known.clear();thumbnails.clear();visualHashes.clear();lastSearchSession=session;}
                         SearchCancellation.check();
                         answer=req.has("providers")?MultiSearch.run(req,rows->{
                             SearchCancellation.check();
@@ -180,7 +186,7 @@ public final class MainActivity extends Activity {
     private void register(JSONArray rows,JSONObject req)throws JSONException{
         for(int i=0;i<rows.length();i++){
             JSONObject row=rows.getJSONObject(i);String url=row.getString("url");
-            known.put(url,new String[]{url,req.getString("q"),row.optString("fallback"),String.valueOf(req.optBoolean("clean",true)),row.optString("tracking"),req.optJSONObject("keys")==null?"":req.optJSONObject("keys").optString("unsplash")});row.put("id",url);
+            known.put(url,new String[]{url,req.getString("q"),row.optString("fallback"),String.valueOf(req.optBoolean("clean",true)),row.optString("tracking"),req.optJSONObject("keys")==null?"":req.optJSONObject("keys").optString("unsplash"),row.optString("thumb"),row.optString("pageUrl")});row.put("id",url);
         }
     }
     private JSONObject prepareShare(int requestId,ShareSelection selection)throws Exception{

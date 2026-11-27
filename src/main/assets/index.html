@@ -191,8 +191,9 @@ function refresh(){
 }
 function show(item){
  current=item;const img=el('large');el('caption').textContent=item.title+' · '+sources(item)+(item.creator?' · '+item.creator:'')+(item.license?' · '+item.license:'');
- img.onerror=()=>{if(item.fallback&&img.src!==item.fallback){img.src=item.fallback;return;}img.onerror=null;img.src=item.thumb;el('caption').textContent=item.title+' · Küçük önizleme';};
- img.onload=()=>{if(img.src===item.url){item.width=img.naturalWidth;item.height=img.naturalHeight;}};img.src=item.url;el('preview').showModal();
+ const options=[...new Set([item.url,item.fallback,item.thumb].filter(Boolean)),'https://gallery.invalid/thumb?id='+encodeURIComponent(item.id)];let position=0;
+ img.onerror=()=>{if(++position<options.length){img.src=options[position];return;}img.onerror=null;img.removeAttribute('src');el('caption').textContent=item.title+' · Önizleme yok';};
+ img.onload=()=>{if(img.src===item.url){item.width=img.naturalWidth;item.height=img.naturalHeight;}};img.src=options[0];el('preview').showModal();
 }
 const imageWatcher=typeof IntersectionObserver==='function'?new IntersectionObserver(entries=>{
  for(const entry of entries){
@@ -206,16 +207,21 @@ function card(item){
  const a=document.createElement('article');
  a.innerHTML='<button class="photo" aria-label="Önizlemeyi aç"><img loading="lazy" referrerpolicy="no-referrer"></button><p></p><footer><label><input type="checkbox">Seç</label><button>İndir</button></footer>';
  const img=a.querySelector('img');img.alt=item.title;
- let attempt=0;
+ let attempt=0,autoRetry=0,retryTimer=null;
  const state={failed:false,resume:()=>{if(!candidates.length)return;img.onerror=retry;img.onload=loaded;img.src=candidates[attempt]||candidates[0];}};
  img._galleryState=state;
- const candidates=[...new Set([item.thumb,item.url,item.fallback].filter(Boolean))];
+ const rescue='https://gallery.invalid/thumb?id='+encodeURIComponent(item.id);
+ const candidates=[...new Set([item.thumb,item.url,item.fallback].filter(Boolean)),rescue];
  const retryButton=document.createElement('button');retryButton.type='button';retryButton.textContent='Önizlemeyi tekrar dene';retryButton.hidden=true;retryButton.style.cssText='display:block;width:100%;font-size:12px;border-radius:0';a.querySelector('.photo').after(retryButton);
- function retry(){if(++attempt<candidates.length)img.src=candidates[attempt];else{img.onerror=null;img.onload=null;img.removeAttribute('src');img.alt='Önizleme yok';state.failed=true;retryButton.hidden=false;}}
- retryButton.onclick=()=>{attempt=0;state.failed=false;retryButton.hidden=true;state.resume();};
+ function retry(){if(++attempt<candidates.length){img.src=candidates[attempt];return;}
+ img.onerror=null;img.onload=null;img.removeAttribute('src');
+ if(autoRetry++<1){state.failed=true;retryTimer=setTimeout(()=>{if(!a.isConnected)return;attempt=0;state.failed=false;const rect=img.getBoundingClientRect();if(rect.bottom>=-1200&&rect.top<=window.innerHeight+1200)state.resume();},1800);return;}
+ img.alt='Önizleme yok';state.failed=true;retryButton.hidden=false;
+ }
+ retryButton.onclick=()=>{clearTimeout(retryTimer);attempt=0;autoRetry=0;state.failed=false;retryButton.hidden=true;state.resume();};
  img.onerror=retry;
  function loaded(){
-  retryButton.hidden=true;
+  retryButton.hidden=true;img.alt=item.title;
   if(searchState&&searchState.clean&&(img.naturalWidth<96||img.naturalHeight<96)){retry();return;}
   if(candidates[attempt]===item.url&&(!item.width||!item.height)){item.width=img.naturalWidth;item.height=img.naturalHeight;info.textContent=sources(item)+' · '+item.width+'×'+item.height;}
  }

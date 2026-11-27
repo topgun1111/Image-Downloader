@@ -35,3 +35,8 @@ new Function('assert',`
  hasMore=true;scheduleAuto();cancelAutoTimer();assert.equal(callback,null);assert.equal(autoTimer,null);
 `)(assert);
 console.log('Infinite-scroll regression checks passed.');
+
+assert.match(html,/id="languageMode"/);
+assert.match(html,/searchState=\{\.\.\.languageSettings\(\)/);
+assert.match(html,/gallery\.invalid\/thumb\?id=/);
+assert.match(html,/autoRetry\+\+<1/);
