@@ -22,6 +22,9 @@ final class Relevance {
         return "\""+q.replace("\"","")+"\"";
     }
     static double score(String q,JSONObject r){
+        String normalized=norm(q);
+        boolean toca=DeepDiscovery.toca(q);
+        if(toca)q=normalized.replaceAll("\\btoca\\s+(boca|life)(\\s+world)?\\b|\\btocaboca\\b","toca");
         Set<String> wanted=words(q);if(wanted.isEmpty())return 1;
         String title=norm(r.optString("title")),description=norm(r.optString("description")),tags=norm(r.optString("tags"));
         String page=r.optString("pageUrl"),url=r.optString("url");
@@ -29,6 +32,7 @@ final class Relevance {
         try{url=new java.net.URL(url).getPath();}catch(Exception e){url="";}
         String paths=norm(page+" "+url);
         Set<String> main=words(title+" "+description+" "+tags),secondary=words(paths);
+        if(toca){if(main.contains("tocaboca"))main.add("toca");if(secondary.contains("tocaboca"))secondary.add("toca");}
         double hits=0;
         for(String token:wanted){if(main.contains(token))hits+=1;else if(secondary.contains(token))hits+=.82;}
         double coverage=hits/wanted.size();
@@ -41,7 +45,7 @@ final class Relevance {
     static boolean strictName(String q){
         // Proper-name queries need metadata, not visual identity inference.
         String s=q.trim();
-        if(s.isEmpty())return false;
+        if(s.isEmpty()||DeepDiscovery.toca(q))return false;
         if(Arrays.asList("ronaldo","messi").contains(norm(s)))return true;
         String[] parts=s.split("\\s+");if(parts.length>3)return false;
         for(String part:parts)if(part.isEmpty()||!Character.isUpperCase(part.codePointAt(0)))return false;

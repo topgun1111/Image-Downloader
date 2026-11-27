@@ -10,7 +10,7 @@ import java.util.concurrent.*;
 import java.util.regex.*;
 
 final class MultiSearch {
-    static final String[] IDS={"bing","google","yandex","pinterest","commons","openverse","flickr","pexels","pixabay","unsplash","deviantart","artstation","freepik","stocksnap","rawpixel","wikimedia","duckduckgo"};
+    static final String[] IDS={"bing","google","yandex","pinterest","commons","openverse","flickr","pexels","pixabay","unsplash","deviantart","artstation","freepik","stocksnap","rawpixel","wikimedia","duckduckgo","deepweb","officialmedia","fangalleries"};
     private static final int LIMIT=45;
     private static final Pattern PIN=Pattern.compile("https?://i\\.pinimg\\.com/(?:originals|[0-9]{2,4}x(?:[0-9]+)?)/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{16,64}\\.(?:jpe?g|png|webp|gif|avif)",Pattern.CASE_INSENSITIVE);
     static final Map<String,String> DOMAINS=new LinkedHashMap<>();
@@ -221,6 +221,8 @@ final class MultiSearch {
     static Map<String,JSONObject> provider(String id,String q,int page,boolean clean,JSONObject keys,boolean pinterestOnly)throws Exception{
         Map<String,JSONObject> out=new LinkedHashMap<>();
         String engineTerm=pinterestOnly?q+" site:pinterest.com":q;
+        if(Arrays.asList("deepweb","officialmedia","fangalleries").contains(id))
+            return DeepDiscovery.run(id,q,page,clean);
         if(id.equals("bing")||id.equals("google")||id.equals("yandex")){
             try{
                 JSONObject req=new JSONObject().put("engine",id).put("q",q).put("page",page).put("pinterest",pinterestOnly).put("key",keys.optString("serpapi"));
@@ -310,17 +312,21 @@ final class MultiSearch {
         Map<Future<Map<String,JSONObject>>,String> pending=new HashMap<>();
         Map<String,Map<String,JSONObject>> byId=new LinkedHashMap<>();
         JSONObject status=new JSONObject();JSONArray next=new JSONArray();
+        JSONObject cursors=req.optJSONObject("cursors"),nextCursors=new JSONObject();
         try{
-            for(String id:ids)pending.put(completion.submit(()->{
-                Map<String,JSONObject> rows=provider(id,q,page,clean,credentials,pinterestOnly);
+            for(String id:ids){
+                JSONObject state=cursors==null?null:cursors.optJSONObject(id);
+                final int position=state==null?page:Math.max(0,Math.min(1000,state.optInt("page",page)));
+                pending.put(completion.submit(()->{
+                Map<String,JSONObject> rows=provider(id,q,position,clean,credentials,pinterestOnly);
                 if(!Relevance.useful(q,rows)&&!Thread.currentThread().isInterrupted()&&Arrays.asList("bing","google","yandex").contains(id)){
                     try{
-                        Map<String,JSONObject> alternate=provider(id,Relevance.expanded(q),page,clean,credentials,pinterestOnly);
+                        Map<String,JSONObject> alternate=provider(id,Relevance.expanded(q),position,clean,credentials,pinterestOnly);
                         if(Relevance.useful(q,alternate)||rows.isEmpty())rows=alternate;
                     }catch(Exception ignored){}
                 }
                 return rows;
-            }),id);
+            }),id);}
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(65);
             while(!pending.isEmpty()){
                 long left=deadline-System.nanoTime();if(left<=0)break;
@@ -328,10 +334,10 @@ final class MultiSearch {
                 String id=pending.remove(f);
                 try{
                     Map<String,JSONObject> rows=f.get();byId.put(id,rows);status.put(id,rows.size());
-                    if(!rows.isEmpty()&&!id.equals("duckduckgo"))next.put(id);
-                }catch(Exception e){status.put(id,-1);}
+                    advance(id,rows,cursors,nextCursors,next,page,q);
+                }catch(Exception e){status.put(id,-1);advance(id,null,cursors,nextCursors,next,page,q);}
             }
-            for(String id:pending.values())status.put(id,-1);
+            for(String id:pending.values()){status.put(id,-1);advance(id,null,cursors,nextCursors,next,page,q);}
         }finally{for(Future<?> f:pending.keySet())f.cancel(true);pool.shutdownNow();}
         // Round-robin prevents the first provider from dominating the gallery.
         List<Iterator<JSONObject>> iterators=new ArrayList<>();
@@ -353,6 +359,27 @@ final class MultiSearch {
             }
         }
         return new JSONObject().put("rows",new JSONArray(all.values())).put("source","Çoklu arama").put("status",status)
-            .put("nextProviders",next).put("more",next.length()>0).put("notice","");
+            .put("nextProviders",next).put("nextCursors",nextCursors).put("more",next.length()>0).put("notice","");
+    }
+    static void advance(String id,Map<String,JSONObject> rows,JSONObject old,JSONObject states,JSONArray next,int page,String q)throws JSONException{
+        JSONObject before=old==null?null:old.optJSONObject(id);
+        int position=before==null?page:before.optInt("page",page);
+        int fails=before==null?0:before.optInt("fails",0),empty=before==null?0:before.optInt("empty",0);
+        String last=before==null?"":before.optString("signature");
+        boolean retry=rows==null;
+        String signature=last;
+        if(retry)fails++;
+        else{
+            fails=0;
+            List<String> sorted=new ArrayList<>(rows.keySet());Collections.sort(sorted);
+            signature=Integer.toHexString(sorted.hashCode());
+            empty=rows.isEmpty()||signature.equals(last)?empty+1:0;position++;
+        }
+        boolean curated=DeepDiscovery.toca(q)&&Arrays.asList("officialmedia","fangalleries").contains(id);
+        int maxEmpty=id.equals("deepweb")?4:curated?6:2;
+        if(fails>2||empty>=maxEmpty||position>1000||id.equals("duckduckgo")&&!retry||
+            curated&&position>=(id.equals("officialmedia")?5:3)||!DeepDiscovery.toca(q)&&Arrays.asList("officialmedia","fangalleries").contains(id))return;
+        states.put(id,new JSONObject().put("page",position).put("fails",fails).put("empty",empty).put("signature",signature));
+        next.put(id);
     }
 }

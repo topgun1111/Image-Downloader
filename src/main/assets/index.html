@@ -7,7 +7,7 @@ form,.tools,footer,header{display:flex;gap:8px;align-items:center}input:not([typ
 button{font:inherit;cursor:pointer;background:#214f85;color:white;border:0;border-radius:10px;padding:10px 13px;min-height:44px}button:disabled{opacity:.55}
 details{margin:12px 0}summary{cursor:pointer;color:#365477}.tools{flex-wrap:wrap;margin:14px 0}.tools button:first-child{background:#e1e9f4;color:#18324a}
 #more{margin:18px auto;display:block}#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(148px,46%),1fr));gap:10px}
-article{min-width:0;background:white;border:1px solid #dbe2eb;border-radius:14px;overflow:hidden}
+article{content-visibility:auto;contain-intrinsic-size:auto 310px;min-width:0;background:white;border:1px solid #dbe2eb;border-radius:14px;overflow:hidden}
 .photo{display:block;width:100%;padding:0;border-radius:0;background:#e6ecf1;color:#213147}.photo img{width:100%;height:145px;display:block;object-fit:cover}
 article p{margin:9px;font-size:13px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 footer{justify-content:space-between;padding:0 8px 8px}label{display:flex;align-items:center;min-height:44px;font-size:14px}input[type=checkbox]{width:19px;height:19px;accent-color:#214f85}
@@ -28,6 +28,8 @@ main{padding-bottom:92px}
 <p style="font-size:13px">İlk indirmeden sonra analiz cihazda yapılır. Kişi adlarında kaynak bilgisi şarttır. AI kurulmazsa metin filtresi kullanılır.</p>
 <p>Aranacak kaynakları seçin.</p><div class="tools"><button id="selectSources" type="button">Tümünü seç</button><button id="clearSources" type="button">Temizle</button></div>
 <div id="providers" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 12px"></div>
+<label><input type="checkbox" id="autoScroll" checked>Otomatik sonsuz kaydırma</label>
+<label><input type="checkbox" id="deep" checked>Derin web keşfi · resmi siteler ve hayran galerileri</label>
 <label><input type="checkbox" id="clean" checked>Yer tutucuları, ikonları ve çok küçük görselleri ele</label>
 <label><input type="checkbox" id="pinterest">Yalnızca Pinterest (seçili arama motorları dahil)</label>
 <details><summary>İsteğe bağlı API anahtarları</summary><p>Anahtarlar sadece bu oturumda kullanılır, APK'ya gömülmez.</p>
@@ -35,11 +37,11 @@ main{padding-bottom:92px}
 <label for="pexelsKey">Pexels</label><input id="pexelsKey" type="password" autocomplete="off">
 <label for="pixabayKey">Pixabay</label><input id="pixabayKey" type="password" autocomplete="off"><label for="unsplashKey">Unsplash Access Key</label><input id="unsplashKey" type="password" autocomplete="off"></details></dialog>
 <dialog id="sortDialog"><header><strong>Sonuçları sırala</strong><button id="closeSort" type="button">Tamam</button></header>
-<select id="sort" style="width:100%;font:inherit;padding:12px"><option value="rank">En ilgili sonuçlar</option><option value="large">En yüksek çözünürlük</option><option value="small">En düşük çözünürlük</option><option value="name">Başlık A–Z</option><option value="source">Kaynağa göre</option></select>
+<select id="sort" style="width:100%;font:inherit;padding:12px"><option value="rank">En ilgili sonuçlar</option><option value="rare">Keşfedilen özgün kaynaklar önce</option><option value="large">En yüksek çözünürlük</option><option value="small">En düşük çözünürlük</option><option value="name">Başlık A–Z</option><option value="source">Kaynağa göre</option></select>
 <p>Boyutu bilinmeyen görseller sona alınır.</p></dialog>
 <details id="sourceDetails" hidden><summary>Kaynak durumları</summary><p id="sourceStatus"></p></details>
 <div class="tools" id="tools" hidden><button id="all">Tümünü seç</button><button id="batch">Seçilenleri indir</button></div>
-<p id="message" role="status"></p><p id="errors" role="alert"></p><section id="grid"></section><button id="more" hidden>Daha fazla göster</button>
+<p id="message" role="status"></p><p id="errors" role="alert"></p><section id="grid"></section><div id="bottomControls" style="text-align:center"><button id="more" hidden>Daha fazla göster</button><button id="pauseAuto" hidden type="button">Otomatik yüklemeyi duraklat</button><p id="scrollStatus" role="status"></p></div>
 <dialog id="preview"><header><strong>Önizleme</strong><button id="closePreview">Kapat</button></header><img id="large" alt="Görsel önizlemesi"><p id="caption"></p><button id="savePreview">İndir</button></dialog><button id="jumpTop" type="button" hidden aria-label="Arama alanına dön"><span aria-hidden="true">↑</span> Başa dön</button></main>
 <style>[hidden]{display:none!important}</style><script>
 const el=id=>document.getElementById(id);
@@ -51,8 +53,8 @@ jumpTop.onclick=()=>{window.scrollTo(0,0);updateJumpTop();};
 updateJumpTop();
 const selected=new Set(), cards=new Map();
 let current=null,busy=false;
-let sequence=0, searchState=null, nextPage=0, hasMore=false, order=0;
-const providers={bing:'Bing',google:'Google',yandex:'Yandex',pinterest:'Pinterest',commons:'Wikimedia Commons',openverse:'Openverse',flickr:'Flickr',pexels:'Pexels',pixabay:'Pixabay',unsplash:'Unsplash',deviantart:'DeviantArt',artstation:'ArtStation',freepik:'Freepik',stocksnap:'StockSnap',rawpixel:'Rawpixel',wikimedia:'Wikipedia',duckduckgo:'DuckDuckGo'};
+let sequence=0, searchState=null, nextPage=0, hasMore=false, order=0, autoPaused=false, emptyBatches=0, autoTimer=null;
+const providers={bing:'Bing',google:'Google',yandex:'Yandex',pinterest:'Pinterest',commons:'Wikimedia Commons',openverse:'Openverse',flickr:'Flickr',pexels:'Pexels',pixabay:'Pixabay',unsplash:'Unsplash',deviantart:'DeviantArt',artstation:'ArtStation',freepik:'Freepik',stocksnap:'StockSnap',rawpixel:'Rawpixel',wikimedia:'Wikipedia',duckduckgo:'DuckDuckGo',deepweb:'Derin web',officialmedia:'Resmi medya',fangalleries:'Hayran galerileri'};
 for(const [id,name] of Object.entries(providers)){
  const label=document.createElement('label'),check=document.createElement('input');
  check.type='checkbox';check.checked=true;check.value=id;label.append(check,document.createTextNode(name));el('providers').append(label);
@@ -61,15 +63,19 @@ for(const [id,name] of Object.entries(providers)){
 function chosen(){return [...el('providers').querySelectorAll('input:checked')].map(x=>x.value);}
 function filterLabel(){el('filterButton').textContent='Filtre · '+chosen().length+'/'+Object.keys(providers).length;}
 function sources(item){return (item.provider||'').split(',').map(x=>providers[x]||x).join(' · ');}
-function sortCards(){
+function sortCards(keepPosition=false){
+ const anchor=keepPosition?document.elementFromPoint(window.innerWidth/2,Math.min(180,window.innerHeight/2))?.closest('article'):null;
+ const anchorTop=anchor?anchor.getBoundingClientRect().top:0;
  const mode=el('sort').value,area=x=>x.item.width>0&&x.item.height>0?x.item.width*x.item.height:0;
  const rows=[...cards.values()].sort((a,b)=>{
   if(mode==='large'||mode==='small'){const x=area(a),y=area(b);if(!x||!y)return x? -1:y?1:a.order-b.order;return (mode==='large'?y-x:x-y)||a.order-b.order;}
+  if(mode==='rare')return Number(!!b.item.discovery)-Number(!!a.item.discovery)||(b.item.relevance||0)-(a.item.relevance||0)||a.order-b.order;
   if(mode==='name')return a.item.title.localeCompare(b.item.title,'tr')||a.order-b.order;
   if(mode==='source')return sources(a.item).localeCompare(sources(b.item),'tr')||a.order-b.order;
   return (b.item.relevance||0)-(a.item.relevance||0)||a.order-b.order;
  });
- for(const c of rows)el('grid').append(c.node);
+ const frag=document.createDocumentFragment();for(const c of rows)frag.append(c.node);el('grid').append(frag);
+ if(anchor&&anchor.isConnected){const delta=anchor.getBoundingClientRect().top-anchorTop;if(Math.abs(delta)>2)window.scrollBy(0,delta);}
 }
 el('filterButton').onclick=()=>el('filters').showModal();
 el('closeFilters').onclick=()=>{filterLabel();el('filters').close();};
@@ -106,6 +112,9 @@ el('installModel').onclick=async()=>{
  finally{busy=false;el('closeFilters').disabled=false;refresh();}
 };
 function refresh(){
+ el('pauseAuto').hidden=!hasMore||!el('autoScroll').checked;
+ el('pauseAuto').textContent=autoPaused?'Otomatik yüklemeyi sürdür':'Otomatik yüklemeyi duraklat';
+ el('scrollStatus').textContent=busy&&hasMore?'Yeni görseller aranıyor…':autoPaused&&hasMore?'Otomatik yükleme duraklatıldı.':hasMore?'Kaydırarak yeni sonuçlar yükleyebilirsiniz.':cards.size&&!busy?'Kaynakların sonuçları tükendi.':'';
  el('installModel').disabled=busy;el('more').hidden=!hasMore;el('more').disabled=busy;el('filterButton').disabled=busy;el('pinterest').disabled=busy;el('tools').hidden=!cards.size;el('go').disabled=busy;
  el('batch').disabled=busy||!selected.size;el('all').disabled=busy;
  el('all').textContent=selected.size===cards.size?'Seçimi kaldır':'Tümünü seç';
@@ -118,15 +127,25 @@ function show(item){
  img.onerror=()=>{if(item.fallback&&img.src!==item.fallback){img.src=item.fallback;return;}img.onerror=null;img.src=item.thumb;el('caption').textContent=item.title+' · Küçük önizleme';};
  img.onload=()=>{if(img.src===item.url){item.width=img.naturalWidth;item.height=img.naturalHeight;}};img.src=item.url;el('preview').showModal();
 }
+const imageWatcher=typeof IntersectionObserver==='function'?new IntersectionObserver(entries=>{
+ for(const entry of entries){
+  const img=entry.target, state=img._galleryState;
+  if(!state)continue;
+  if(entry.isIntersecting){if(!img.hasAttribute('src')&&!state.failed)state.resume();}
+  else if(img.hasAttribute('src')&&!state.failed){img.onload=null;img.onerror=null;img.removeAttribute('src');}
+ }
+},{rootMargin:'1200px 0px 1200px 0px'}):null;
 function card(item){
  const a=document.createElement('article');
  a.innerHTML='<button class="photo" aria-label="Önizlemeyi aç"><img loading="lazy" referrerpolicy="no-referrer"></button><p></p><footer><label><input type="checkbox">Seç</label><button>İndir</button></footer>';
  const img=a.querySelector('img');img.alt=item.title;
  let attempt=0;
+ const state={failed:false,resume:()=>{if(!candidates.length)return;img.onerror=retry;img.onload=loaded;img.src=candidates[attempt]||candidates[0];}};
+ img._galleryState=state;
  const candidates=[...new Set([item.thumb,item.url,item.fallback].filter(Boolean))];
  const retryButton=document.createElement('button');retryButton.type='button';retryButton.textContent='Önizlemeyi tekrar dene';retryButton.hidden=true;retryButton.style.cssText='display:block;width:100%;font-size:12px;border-radius:0';a.querySelector('.photo').after(retryButton);
- function retry(){if(++attempt<candidates.length)img.src=candidates[attempt];else{img.onerror=null;img.onload=null;img.removeAttribute('src');img.alt='Önizleme yok';retryButton.hidden=false;}}
- retryButton.onclick=()=>{attempt=0;retryButton.hidden=true;img.onerror=retry;img.onload=loaded;img.src=candidates[0];};
+ function retry(){if(++attempt<candidates.length)img.src=candidates[attempt];else{img.onerror=null;img.onload=null;img.removeAttribute('src');img.alt='Önizleme yok';state.failed=true;retryButton.hidden=false;}}
+ retryButton.onclick=()=>{attempt=0;state.failed=false;retryButton.hidden=true;state.resume();};
  img.onerror=retry;
  function loaded(){
   retryButton.hidden=true;
@@ -136,11 +155,11 @@ function card(item){
  img.onload=loaded;
  // Set src after the card and its metadata have been created.
  a.querySelector('.photo').onclick=()=>show(item);a.querySelector('p').textContent=item.title;
- const info=document.createElement('p');info.textContent=sources(item)+(item.width&&item.height?' · '+item.width+'×'+item.height:'');info.title=info.textContent;a.querySelector('footer').before(info);const relevance=document.createElement('p');relevance.textContent=item.aiChecked?'AI + metin eşleşmesi':'Metin eşleşmesi';relevance.style.color='#365477';a.querySelector('footer').before(relevance);
+ const info=document.createElement('p');info.textContent=sources(item)+(item.width&&item.height?' · '+item.width+'×'+item.height:'');info.title=info.textContent;a.querySelector('footer').before(info);const relevance=document.createElement('p');relevance.textContent=(item.discovery?'Derin keşif · ':'')+(item.aiChecked?'AI + metin eşleşmesi':'Metin eşleşmesi');relevance.style.color='#365477';a.querySelector('footer').before(relevance);
  if(item.creatorUrl){const author=document.createElement('a');author.href=item.creatorUrl;author.textContent=(item.creator||'Fotoğrafçı')+' · Unsplash';author.style.cssText='display:block;font-size:12px;padding:0 9px 7px';a.querySelector('footer').before(author);}if(item.pageUrl){const link=document.createElement('a');link.href=item.pageUrl;link.textContent='Kaynak';link.rel='noopener noreferrer';link.style.cssText='display:block;font-size:12px;padding:0 9px 7px';a.querySelector('footer').before(link);}
  const check=a.querySelector('input'),save=a.querySelector('footer button');
  check.onchange=()=>{if(check.checked)selected.add(item.id);else selected.delete(item.id);refresh();};
- save.onclick=()=>downloads([item.id]);cards.set(item.id,{item,check,save,node:a,order:order++});el('grid').append(a);img.src=candidates[0];
+ save.onclick=()=>downloads([item.id]);cards.set(item.id,{item,check,save,node:a,order:order++});el('grid').append(a);if(imageWatcher)imageWatcher.observe(img);else state.resume();
 }
 async function downloads(ids){
  if(busy)return;busy=true;refresh();el('errors').textContent='';let saved=0;
@@ -149,38 +168,57 @@ async function downloads(ids){
   try{const result=await api('save',{id});saved++;selected.delete(id);cards.get(id).save.textContent=result.fallback?'Alternatif':'İndirildi';}
   catch(e){el('errors').textContent+=cards.get(id).item.title+' — '+e.message+'\n';}
  }
- el('message').textContent=saved+' / '+ids.length+' görsel kaydedildi · Download/Google';busy=false;refresh();
+ el('message').textContent=saved+' / '+ids.length+' görsel kaydedildi · Download/Google';busy=false;refresh();scheduleAuto();
 }
 el('form').onsubmit=async e=>{
  e.preventDefault();if(busy||!el('query').value.trim())return;busy=true;refresh();
  const q=el('query').value.trim(), pinterest=el('pinterest').checked;
  let selectedProviders=chosen();
+ if(!el('deep').checked)selectedProviders=selectedProviders.filter(x=>!['deepweb','officialmedia','fangalleries'].includes(x));
  if(pinterest)selectedProviders=selectedProviders.filter(x=>['pinterest','bing','google','yandex'].includes(x));
  if(!selectedProviders.length){el('errors').textContent='En az bir kaynak seçin.';busy=false;refresh();return;}
  el('message').textContent=selectedProviders.length+' kaynak paralel aranıyor…';el('errors').textContent='';
  el('sourceDetails').hidden=true;
- cards.clear();selected.clear();order=0;el('grid').replaceChildren();refresh();
- searchState={q,providers:selectedProviders,pinterest,clean:el('clean').checked,precision:el('precision').value,ai:el('ai').checked,duplicates:el('duplicates').checked,keys:{serpapi:el('apiKey').value.trim(),pexels:el('pexelsKey').value.trim(),pixabay:el('pixabayKey').value.trim(),unsplash:el('unsplashKey').value.trim()}};
- nextPage=0;hasMore=false;await loadPage();
+ if(imageWatcher)imageWatcher.disconnect();
+ cards.clear();selected.clear();order=0;emptyBatches=0;autoPaused=false;hasMore=false;el('grid').replaceChildren();refresh();
+ searchState={q,providers:selectedProviders,cursors:{},pinterest,clean:el('clean').checked,precision:el('precision').value,ai:el('ai').checked,duplicates:el('duplicates').checked,keys:{serpapi:el('apiKey').value.trim(),pexels:el('pexelsKey').value.trim(),pixabay:el('pixabayKey').value.trim(),unsplash:el('unsplashKey').value.trim()}};
+ nextPage=0;hasMore=false;busy=false;await loadPage();
 };
 async function loadPage(){
+ if(busy||!searchState)return;
  busy=true;refresh();el('errors').textContent='';
  try {
   const before=cards.size;
   const result=await api('search',{...searchState,page:nextPage},partial=>{
    if(partial.message)el('message').textContent=partial.message;
-   if(partial.rows){for(const item of partial.rows)if(!cards.has(item.id))card(item);sortCards();refresh();el('message').textContent=cards.size+' eşleşen görsel · arama devam ediyor…';}
+   if(partial.rows){for(const item of partial.rows)if(!cards.has(item.id))card(item);refresh();el('message').textContent=cards.size+' eşleşen görsel · arama devam ediyor…';}
   });
   for(const item of result.rows)if(!cards.has(item.id))card(item);
   hasMore=result.more&&nextPage<1000;nextPage++;
   if(result.nextProviders)searchState.providers=result.nextProviders;
+  if(result.nextCursors)searchState.cursors=result.nextCursors;
+  emptyBatches=cards.size===before?emptyBatches+1:0;
+  if(emptyBatches>=3)autoPaused=true;
   if(result.status){el('sourceDetails').hidden=false;el('sourceStatus').textContent=Object.entries(result.status).map(([id,count])=>(providers[id]||id)+': '+(count<0?'erişilemedi / zaman aşımı':count===0?'sonuç yok / engelli':count+' görsel')).join(' · ');}
-  sortCards();
-  el('message').textContent=[result.notice,result.source+' · '+cards.size+' görsel',cards.size===before?'Başka sonuç bulunamadı.':''].filter(Boolean).join(' ');
- } catch(e){el('errors').textContent=e.message;el('message').textContent=cards.size?cards.size+' görsel':'Arama tamamlanamadı.';}
- finally{busy=false;refresh();}
+  sortCards(true);
+  el('message').textContent=[result.notice,result.source+' · '+cards.size+' görsel',cards.size===before?(hasMore?'Bu turda yeni görsel bulunamadı.':'Başka sonuç bulunamadı.'):''].filter(Boolean).join(' ');
+ } catch(e){autoPaused=true;el('errors').textContent=e.message;el('message').textContent=cards.size?cards.size+' görsel':'Arama tamamlanamadı.';}
+ finally{busy=false;refresh();scheduleAuto();}
 }
-el('more').onclick=loadPage;
+function scheduleAuto(){
+ if(autoTimer!==null)return;
+ if(busy||!hasMore||autoPaused||!el('autoScroll').checked||document.hidden||document.querySelector('dialog[open]'))return;
+ const nearEnd=el('bottomControls').getBoundingClientRect().top<window.innerHeight+900;
+ if(!nearEnd)return;
+ autoTimer=setTimeout(()=>{autoTimer=null;if(!busy&&hasMore&&!autoPaused&&el('autoScroll').checked&&!document.hidden&&!document.querySelector('dialog[open]')&&el('bottomControls').getBoundingClientRect().top<window.innerHeight+900)loadPage();},450);
+}
+window.addEventListener('scroll',scheduleAuto,{passive:true});
+window.addEventListener('resize',scheduleAuto,{passive:true});
+document.addEventListener('visibilitychange',scheduleAuto);
+for(const dialog of document.querySelectorAll('dialog'))dialog.addEventListener('close',scheduleAuto);
+el('autoScroll').onchange=()=>{refresh();scheduleAuto();};
+el('pauseAuto').onclick=()=>{autoPaused=!autoPaused;if(!autoPaused)emptyBatches=0;refresh();scheduleAuto();};
+el('more').onclick=()=>{emptyBatches=0;loadPage();};
 
 el('all').onclick=()=>{if(selected.size===cards.size)selected.clear();else for(const id of cards.keys())selected.add(id);refresh();};
 el('batch').onclick=()=>downloads([...selected]);
