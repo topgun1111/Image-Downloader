@@ -3,8 +3,9 @@ package app.imagedownloader;
 import java.io.*;
 import java.security.MessageDigest;
 import java.util.Locale;
+import java.util.zip.GZIPInputStream;
 
-/** IDP1: byte-exact copy/literal operations, independent of APK ZIP alignment. */
+/** IDP1 legacy and IDP2 gzip-wrapped IDP1, with bounded streaming reconstruction. */
 final class ApkDelta {
     static final int MAX=512*1024*1024;
     static String sha256(File file)throws Exception{
@@ -24,7 +25,7 @@ final class ApkDelta {
         if(expected<=0||expected>MAX||base.length()<=0||base.length()>MAX||patch.length()<=0||patch.length()>MAX)
             throw new IOException("Geçersiz yama boyutu.");
         try(RandomAccessFile old=new RandomAccessFile(base,"r");
-            DataInputStream in=new DataInputStream(new BufferedInputStream(new FileInputStream(patch)));
+            DataInputStream in=openPatch(patch);
             OutputStream out=new BufferedOutputStream(new FileOutputStream(target))){
             if(in.readInt()!=0x49445031||in.readInt()!=expected)throw new IOException("Geçersiz yama başlığı.");
             long written=0;int ops=0;byte[] buf=new byte[65536];
@@ -49,6 +50,17 @@ final class ApkDelta {
             }
             if(written!=expected||in.read()!=-1)throw new IOException("Eksik veya geçersiz yama.");
         }
+    }
+    private static DataInputStream openPatch(File patch)throws IOException{
+        BufferedInputStream raw=new BufferedInputStream(new FileInputStream(patch));
+        try{
+            raw.mark(4);
+            DataInputStream header=new DataInputStream(raw);
+            int magic=header.readInt();
+            if(magic==0x49445032)return new DataInputStream(new BufferedInputStream(new GZIPInputStream(raw,65536)));
+            raw.reset();
+            return new DataInputStream(raw);
+        }catch(IOException e){raw.close();throw e;}
     }
     // CLI used by CI to check the exact decoder used in the Android app.
     public static void main(String[] args)throws Exception{

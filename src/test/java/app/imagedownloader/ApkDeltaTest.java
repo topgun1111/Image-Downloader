@@ -27,6 +27,13 @@ public class ApkDeltaTest {
         return bytes.toByteArray();
     }
     @Test public void reconstructs()throws Exception{run(patch(1,false),new byte[]{20,30,1,2},true);}
+    @Test public void compressedReconstructs()throws Exception{
+        ByteArrayOutputStream bytes=new ByteArrayOutputStream();
+        bytes.write(new byte[]{73,68,80,50});
+        try(java.util.zip.GZIPOutputStream gzip=new java.util.zip.GZIPOutputStream(bytes)){gzip.write(patch(1,false));}
+        run(bytes.toByteArray(),new byte[]{20,30,1,2},true);
+        run(java.util.Arrays.copyOf(bytes.toByteArray(),8),new byte[4],false);
+    }
     @Test public void rejectsInvalidOffset()throws Exception{run(patch(3,false),new byte[4],false);}
     @Test public void rejectsTrailingBytes()throws Exception{run(patch(1,true),new byte[4],false);}
     @Test public void rejectsTruncation()throws Exception{run(java.util.Arrays.copyOf(patch(1,false),10),new byte[4],false);}

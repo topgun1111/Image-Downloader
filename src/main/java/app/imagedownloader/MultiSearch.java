@@ -347,7 +347,7 @@ final class MultiSearch {
         if(index<0)return new JSONObject().put("rows",new JSONArray()).put("source","Çoklu arama").put("more",false).put("nextProviders",chosen).put("nextCursors",state);
         String locale=plan.get(index),original=req.getString("q");
         JSONObject old=state.optJSONObject(locale);
-        String query=SearchLanguages.translate(original,locale.split("-")[0],req.optBoolean("translationWifi",true));
+        String query=req.optBoolean("translationEnabled",true)?SearchLanguages.translate(original,locale.split("-")[0],req.optBoolean("translationWifi",true)):original;
         SearchCancellation.check();
         if(old!=null&&!query.equals(old.optString("query",original)))old=null;
         JSONObject single=new JSONObject(req.toString()).put("q",query).put("locale",locale).put("page",old==null?0:old.optInt("page"));

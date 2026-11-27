@@ -28,38 +28,48 @@ final class ReleaseClient {
     static final class Release {
         final int code;
         final long size;
-        final String name,digest,downloadUrl;
+        final String name,digest,downloadUrl,filename;
         final JSONArray assets;
-        Release(JSONObject json) throws Exception {
+        Release(JSONObject json) throws Exception {this(json,false);}
+        Release(JSONObject json,boolean arm64) throws Exception {
             String tag=json.getString("tag_name");
             Matcher m=TAG.matcher(tag);
             if(!m.matches()||json.optBoolean("draft")||json.optBoolean("prerelease"))
                 throw new IOException("Güncellenebilir bir kararlı sürüm bulunamadı.");
             name=tag.substring(1); code=Integer.parseInt(m.group(1));
             assets=json.getJSONArray("assets");
-            JSONObject apk=null;
+            JSONObject apk=null,optimized=null;
             for(int i=0;i<assets.length();i++){
                 JSONObject a=assets.getJSONObject(i);
                 if("Image-Downloader.apk".equals(a.optString("name")) && "uploaded".equals(a.optString("state"))) apk=a;
+                if(arm64&&"Image-Downloader-arm64-v8a.apk".equals(a.optString("name"))&&"uploaded".equals(a.optString("state")))optimized=a;
             }
             if(apk==null)throw new IOException("Sürümün APK dosyası henüz hazır değil.");
+            if(optimized!=null&&validAsset(optimized,tag,"Image-Downloader-arm64-v8a.apk")&&optimized.optLong("size")<apk.optLong("size"))apk=optimized;
+            filename=apk.getString("name");
             size=apk.getLong("size");digest=apk.optString("digest");
-            downloadUrl=DOWNLOAD+tag+"/Image-Downloader.apk";
+            downloadUrl=DOWNLOAD+tag+"/"+filename;
             if(!downloadUrl.equals(apk.optString("browser_download_url"))||size<=0||size>MAX_APK||!digest.matches("sha256:[a-fA-F0-9]{64}"))
                 throw new IOException("Yayınlanan APK bilgileri doğrulanamadı.");
         }
+        private static boolean validAsset(JSONObject a,String tag,String filename){
+            long bytes=a.optLong("size",0);
+            return (DOWNLOAD+tag+"/"+filename).equals(a.optString("browser_download_url"))&&bytes>0&&bytes<=MAX_APK&&a.optString("digest").matches("sha256:[a-fA-F0-9]{64}");
+        }
         Patch patchFor(String baseDigest){
             if(baseDigest==null||!baseDigest.matches("sha256:[a-f0-9]{64}"))return null;
-            String filename="delta-"+baseDigest.substring(7)+".idpatch";
-            String url=DOWNLOAD+"v"+name+"/"+filename;
-            for(int i=0;i<assets.length();i++){
+            String suffix=baseDigest.substring(7)+".idpatch";
+            String[] names=filename.equals("Image-Downloader-arm64-v8a.apk")?
+                new String[]{"delta2-arm64-"+suffix}:new String[]{"delta2-"+suffix,"delta-"+suffix};
+            Patch best=null;
+            for(String candidate:names)for(int i=0;i<assets.length();i++){
                 JSONObject a=assets.optJSONObject(i);if(a==null)continue;
-                long bytes=a.optLong("size",0);String hash=a.optString("digest");
-                if(filename.equals(a.optString("name"))&&"uploaded".equals(a.optString("state"))
+                long bytes=a.optLong("size",0);String hash=a.optString("digest"),url=DOWNLOAD+"v"+name+"/"+candidate;
+                if(candidate.equals(a.optString("name"))&&"uploaded".equals(a.optString("state"))
                     &&url.equals(a.optString("browser_download_url"))&&bytes>0&&bytes<size*0.8
-                    &&hash.matches("sha256:[a-fA-F0-9]{64}"))return new Patch(bytes,hash,url,baseDigest);
+                    &&hash.matches("sha256:[a-fA-F0-9]{64}")&&(best==null||bytes<best.size))best=new Patch(bytes,hash,url,baseDigest);
             }
-            return null;
+            return best;
         }
     }
     private HttpURLConnection connect(String address,boolean binary) throws IOException {
@@ -93,7 +103,7 @@ final class ReleaseClient {
                 if(out.size()+n>1024*1024)throw new IOException("Sürüm bilgisi çok büyük.");
                 out.write(b,0,n);
             }
-            return new Release(new JSONObject(out.toString(StandardCharsets.UTF_8.name())));
+            return new Release(new JSONObject(out.toString(StandardCharsets.UTF_8.name())),android.os.Build.SUPPORTED_ABIS.length>0&&"arm64-v8a".equals(android.os.Build.SUPPORTED_ABIS[0]));
         }finally{c.disconnect();}
     }
     interface Progress { void percent(int percent); }

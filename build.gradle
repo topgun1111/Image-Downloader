@@ -5,6 +5,10 @@ android {
     defaultConfig {
         applicationId 'app.imagedownloader'
         minSdk 29
+        // Build the same signed app for ARM64 without shipping other native ABIs.
+        if (providers.gradleProperty('targetAbi').isPresent()) {
+            ndk { abiFilters providers.gradleProperty('targetAbi').get() }
+        }
         targetSdk 35
         versionCode providers.gradleProperty('commitCount').orElse(providers.exec { commandLine 'git', 'rev-list', '--count', 'HEAD' }.standardOutput.asText.map { it.trim() }).get().toInteger()
         versionName providers.gradleProperty('appVersion').getOrElse("1.2.${versionCode}-local")
@@ -13,7 +17,11 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
-    packaging { resources.excludes += ['META-INF/versions/**', 'META-INF/DEPENDENCIES'] }
+    packaging {
+        resources.excludes += ['META-INF/versions/**', 'META-INF/DEPENDENCIES']
+        // Keep native bytes uncompressed and stable across releases for delta reuse.
+        jniLibs.useLegacyPackaging = false
+    }
 }
 dependencies {
     testImplementation 'junit:junit:4.13.2'

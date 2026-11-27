@@ -53,6 +53,13 @@ jobs:
           "$tools/apksigner" sign --key "$RUNNER_TEMP/signer.pk8" --cert "$RUNNER_TEMP/signer.der" --out Image-Downloader.apk "$RUNNER_TEMP/aligned.apk"
           "$tools/apksigner" verify --verbose --print-certs Image-Downloader.apk
           "$tools/aapt" dump badging Image-Downloader.apk | grep -F "package: name='app.imagedownloader' versionCode='$COUNT' versionName='$VERSION'"
+          gradle --stacktrace assembleRelease -PtargetAbi=arm64-v8a -PcommitCount="$COUNT" -PappVersion="$VERSION"
+          "$tools/zipalign" -f -P 16 4 build/outputs/apk/release/*-unsigned.apk "$RUNNER_TEMP/arm64-aligned.apk"
+          "$tools/apksigner" sign --key "$RUNNER_TEMP/signer.pk8" --cert "$RUNNER_TEMP/signer.der" --out Image-Downloader-arm64-v8a.apk "$RUNNER_TEMP/arm64-aligned.apk"
+          "$tools/apksigner" verify --verbose --print-certs Image-Downloader-arm64-v8a.apk
+          "$tools/aapt" dump badging Image-Downloader-arm64-v8a.apk | grep -F "package: name='app.imagedownloader' versionCode='$COUNT' versionName='$VERSION'"
+          "$tools/aapt" dump badging Image-Downloader-arm64-v8a.apk | grep -Fx "native-code: 'arm64-v8a'"
+          test "$(stat -c%s Image-Downloader-arm64-v8a.apk)" -lt "$(stat -c%s Image-Downloader.apk)"
       - name: Check compatibility with the previous signed release
         id: compatibility
         env:
@@ -92,29 +99,32 @@ jobs:
           fi
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -r --arg current "v$VERSION" '[.[][] | select(.draft==false and .prerelease==false and .tag_name!=$current and (.tag_name|test("^v[0-9]+[.][0-9]+[.][0-9]+-[0-9a-f]{8,40}$")) and any(.assets[]?; .name=="Image-Downloader.apk" and .state=="uploaded"))] | sort_by(.tag_name|split("-")[0]|split(".")[-1]|tonumber) | reverse | .[:10][] | .tag_name' > "$RUNNER_TEMP/delta-tags"
           while IFS= read -r tag; do
-            base="$RUNNER_TEMP/delta-base/Image-Downloader.apk"
-            rm -f "$base"
-            if ! gh release download "$tag" -p Image-Downloader.apk -D "$RUNNER_TEMP/delta-base"; then
-              echo "::warning::Cannot fetch delta base $tag"; continue
-            fi
-            if ! "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$base"; then
-              echo "::warning::Invalid base $tag"; continue
-            fi
-            if ! patch=$(python3 ci/apk-delta.py "$base" Image-Downloader.apk "$RUNNER_TEMP/deltas"); then
-              echo "::warning::Cannot generate delta for $tag; full APK remains available."
-              continue
-            fi
-            if [[ -n "$patch" ]]; then
-              if ! java -cp "$RUNNER_TEMP/delta-java" app.imagedownloader.ApkDelta "$base" "$patch" "$RUNNER_TEMP/reconstructed.apk" "$size" || ! cmp Image-Downloader.apk "$RUNNER_TEMP/reconstructed.apk" || ! "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$RUNNER_TEMP/reconstructed.apk"; then
-                echo "::warning::Delta verification failed for $tag; discarding patch."
-                rm -f "$patch" "$RUNNER_TEMP/reconstructed.apk"
-                continue
+            for asset in Image-Downloader.apk Image-Downloader-arm64-v8a.apk; do
+              base="$RUNNER_TEMP/delta-base/$asset"
+              rm -f "$base"
+              if ! gh release download "$tag" -p "$asset" -D "$RUNNER_TEMP/delta-base"; then
+                echo "No base $asset for $tag"; continue
               fi
-              echo "$tag: $(stat -c%s "$patch") / $size bytes"
-              rm -f "$RUNNER_TEMP/reconstructed.apk"
-            else
-              echo "$tag: no useful patch"
-            fi
+              if ! "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$base"; then
+                echo "::warning::Invalid base $tag/$asset"; continue
+              fi
+              for format in legacy compressed arm64; do
+                if [[ "$asset" == Image-Downloader-arm64-v8a.apk && "$format" != arm64 ]]; then continue; fi
+                target=Image-Downloader.apk
+                if [[ "$format" == arm64 ]]; then target=Image-Downloader-arm64-v8a.apk; fi
+                size=$(stat -c%s "$target")
+                if ! patch=$(python3 ci/apk-delta.py "$base" "$target" "$RUNNER_TEMP/deltas" --format "$format"); then
+                  echo "::warning::Cannot generate $format delta for $tag/$asset"; continue
+                fi
+                if [[ -z "$patch" ]]; then continue; fi
+                if ! java -cp "$RUNNER_TEMP/delta-java" app.imagedownloader.ApkDelta "$base" "$patch" "$RUNNER_TEMP/reconstructed.apk" "$size" || ! cmp "$target" "$RUNNER_TEMP/reconstructed.apk" || ! "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$RUNNER_TEMP/reconstructed.apk"; then
+                  echo "::warning::Delta verification failed for $tag/$asset/$format"
+                  rm -f "$patch" "$RUNNER_TEMP/reconstructed.apk"; continue
+                fi
+                echo "$tag/$asset/$format: $(stat -c%s "$patch") / $size bytes"
+                rm -f "$RUNNER_TEMP/reconstructed.apk"
+              done
+            done
           done < "$RUNNER_TEMP/delta-tags"
       - name: Publish to Releases and verify download
         env:
@@ -128,7 +138,7 @@ jobs:
             if (( $(stat -c%s Image-Downloader.apk) > 128 * 1024 * 1024 )); then
               notes="$notes. If your older in-app updater rejects this APK size, download this signed APK and install over the existing app once; do not uninstall."
             fi
-            gh release create "$tag" Image-Downloader.apk "${patches[@]}" --target "$GITHUB_SHA" --title "Image Downloader $VERSION" --notes "$notes" --latest
+            gh release create "$tag" Image-Downloader.apk Image-Downloader-arm64-v8a.apk "${patches[@]}" --target "$GITHUB_SHA" --title "Image Downloader $VERSION" --notes "$notes" --latest
           fi
           info=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag")
           asset=$(jq -er '.assets[] | select(.name=="Image-Downloader.apk") | .id' <<< "$info")
@@ -147,6 +157,11 @@ jobs:
           curl -fsSL --retry 3 "$apk_url" -o "$RUNNER_TEMP/anonymous.apk"
           echo "${digest#sha256:}  $RUNNER_TEMP/anonymous.apk" | sha256sum -c -
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$RUNNER_TEMP/anonymous.apk"
+          arm_url=$(jq -er '.assets[] | select(.name=="Image-Downloader-arm64-v8a.apk") | .browser_download_url' <<< "$info")
+          arm_digest=$(jq -er '.assets[] | select(.name=="Image-Downloader-arm64-v8a.apk") | .digest' <<< "$info")
+          curl -fsSL --retry 3 "$arm_url" -o "$RUNNER_TEMP/anonymous-arm64.apk"
+          echo "${arm_digest#sha256:}  $RUNNER_TEMP/anonymous-arm64.apk" | sha256sum -c -
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$RUNNER_TEMP/anonymous-arm64.apk"
   test-update:
     if: github.event.repository.private == false && (contains(github.event.head_commit.message, '[test-update]') || github.event_name == 'workflow_dispatch')
     needs: release

@@ -36,7 +36,7 @@ main{padding-bottom:150px}
 <label for="languageMode">Dil modu</label><select id="languageMode" style="width:100%;font:inherit;padding:10px"><option value="auto">Akıllı otomatik</option><option value="all">Tüm desteklenen diller</option><option value="selected">Seçilen diller</option><option value="local">Ülkeye özel</option></select>
 <div id="languageChoices" hidden><div class="tools"><button id="allLanguages" type="button">Tümünü seç</button><button id="clearLanguages" type="button">Temizle</button></div><div id="languageList" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 10px;max-height:260px;overflow:auto"></div></div>
 <div id="localChoices" hidden><label for="localCountry">Ülke</label><select id="localCountry" style="width:100%;font:inherit;padding:10px"></select><label for="localLanguage">Dil</label><select id="localLanguage" style="width:100%;font:inherit;padding:10px"></select></div>
-<label><input id="translationWifi" type="checkbox" checked>Çeviri modellerini yalnızca Wi-Fi ile indir</label><p style="font-size:13px">Diller kaydırdıkça sırayla aranır. Çeviri: Google ML Kit (Google Translate). Model hazır değilse özgün sorgu kullanılır. Ülkeye özel mod yalnızca tanınabilen ülke kaynaklarını gösterir.</p>
+<label><input id="translationEnabled" type="checkbox" checked>Otomatik çeviri (isteğe bağlı dil modelleri)</label><label><input id="translationWifi" type="checkbox" checked>Çeviri modellerini yalnızca Wi-Fi ile indir</label><p style="font-size:13px">Diller kaydırdıkça sırayla aranır. Çeviri: Google ML Kit (Google Translate). Model hazır değilse özgün sorgu kullanılır. Ülkeye özel mod yalnızca tanınabilen ülke kaynaklarını gösterir.</p>
 <h3>Akıllı arama</h3>
 <label for="precision">Arama hassasiyeti</label><select id="precision" style="width:100%;font:inherit;padding:10px"><option value="fast">Hızlı · metin filtresi</option><option value="balanced">Dengeli</option><option value="strict" selected>Sıkı · önerilen</option><option value="ultra">Çok sıkı</option></select>
 <label><input type="checkbox" id="ai" checked>MobileCLIP görsel AI</label>
@@ -99,7 +99,7 @@ for(const code of languageCodes){
 for(const code of [...new Set(languageCountries.concat(['GB','CA','AU','MX','AT','CH','BE','NZ','TW','HK']))].sort())el('localCountry').add(new Option(regionDisplay?regionDisplay.of(code):code,code));
 el('localCountry').value='TR';el('localLanguage').value='tr';
 function languageSelection(){return [...el('languageList').querySelectorAll('input:checked')].map(x=>x.value);}
-function languageSettings(){return {languageMode:el('languageMode').value,languages:languageSelection(),localLanguage:el('localLanguage').value,localCountry:el('localCountry').value,translationWifi:el('translationWifi').checked};}
+function languageSettings(){return {languageMode:el('languageMode').value,languages:languageSelection(),localLanguage:el('localLanguage').value,localCountry:el('localCountry').value,translationEnabled:el('translationEnabled').checked,translationWifi:el('translationWifi').checked};}
 function rememberLanguage(){
  el('languageChoices').hidden=el('languageMode').value!=='selected';el('localChoices').hidden=el('languageMode').value!=='local';
  try{localStorage.setItem('searchLanguages',JSON.stringify(languageSettings()));}catch(e){}
@@ -111,10 +111,11 @@ try{
   if(Array.isArray(saved.languages))for(const x of el('languageList').querySelectorAll('input'))x.checked=saved.languages.includes(x.value);
   if(languageCodes.includes(saved.localLanguage))el('localLanguage').value=saved.localLanguage;
   if([...el('localCountry').options].some(x=>x.value===saved.localCountry))el('localCountry').value=saved.localCountry;
+  el('translationEnabled').checked=saved.translationEnabled!==false;
   el('translationWifi').checked=saved.translationWifi!==false;
  }
 }catch(e){}
-for(const id of ['languageMode','localLanguage','translationWifi'])el(id).onchange=rememberLanguage;
+for(const id of ['languageMode','localLanguage','translationEnabled','translationWifi'])el(id).onchange=rememberLanguage;
 el('localCountry').onchange=()=>{const i=languageCountries.indexOf(el('localCountry').value);if(i>=0)el('localLanguage').value=languageCodes[i];rememberLanguage();};
 for(const [id,value] of [['allLanguages',true],['clearLanguages',false]])el(id).onclick=()=>{for(const x of el('languageList').querySelectorAll('input'))x.checked=value;rememberLanguage();};
 rememberLanguage();

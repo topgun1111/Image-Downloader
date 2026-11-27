@@ -96,7 +96,7 @@ public final class UpdateSettings extends Activity {
     private static String mb(long bytes){return String.format(java.util.Locale.ROOT,"%.2f MB",bytes/1000000.0);}
     private void describeRelease(){
         if(latest==null)return;
-        status.setText("Yeni sürüm  "+latest.name+"\nTam APK: "+mb(latest.size)
+        status.setText("Yeni sürüm  "+latest.name+"\nTam APK ("+(latest.filename.contains("arm64")?"ARM64":"Evrensel")+"): "+mb(latest.size)
             +(patch==null?"\nUyumlu kısmi güncelleme yok.":"\nKısmi güncelleme: "+mb(patch.size))
             +"\n"+(UpdateDownload.unmeteredWifi(this)?"Wi-Fi / kotasız bağlantı: tam APK":"Mobil / kotalı bağlantı: "+(patch==null?"Wi-Fi beklenir":"kısmi güncelleme")));
     }

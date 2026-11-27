@@ -25,11 +25,11 @@ final class UpdateDownload {
     }
     static final class Job {
         final long id,size,code,transferSize;
-        final String name,digest,file,transferDigest,base;
+        final String name,digest,file,transferDigest,base,apkUrl;
         final boolean patch,metered;
-        Job(long id,long size,long code,String name,String digest,String file,long transferSize,String transferDigest,String base,boolean metered){
+        Job(long id,long size,long code,String name,String digest,String file,long transferSize,String transferDigest,String base,boolean metered,String apkUrl){
             this.id=id;this.size=size;this.code=code;this.name=name;this.digest=digest;this.file=file;
-            this.transferSize=transferSize;this.transferDigest=transferDigest;this.base=base;this.patch=!base.isEmpty();this.metered=metered;
+            this.transferSize=transferSize;this.transferDigest=transferDigest;this.base=base;this.patch=!base.isEmpty();this.metered=metered;this.apkUrl=apkUrl;
         }
     }
     static final class Snapshot {
@@ -42,7 +42,7 @@ final class UpdateDownload {
         if(id<0||!file.matches("updates/update-[0-9]+-[a-f0-9-]+[.]part"))return null;
         long size=prefs.getLong("size",0);String digest=prefs.getString("digest","");
         return new Job(id,size,prefs.getLong("code",0),prefs.getString("name",""),digest,file,
-            prefs.getLong("transferSize",size),prefs.getString("transferDigest",digest),prefs.getString("base",""),prefs.getBoolean("metered",true));
+            prefs.getLong("transferSize",size),prefs.getString("transferDigest",digest),prefs.getString("base",""),prefs.getBoolean("metered",true),prefs.getString("apkUrl",ReleaseClient.DOWNLOAD+"v"+prefs.getString("name","")+"/Image-Downloader.apk"));
     }
     File file(Job job)throws IOException{
         File dir=ctx.getExternalFilesDir(TYPE);
@@ -64,16 +64,16 @@ final class UpdateDownload {
     synchronized Job start(ReleaseClient.Release release,ReleaseClient.Patch patch,boolean metered)throws Exception{
         return enqueue(release.code,release.name,release.size,release.digest,
             patch==null?release.downloadUrl:patch.url,patch==null?release.size:patch.size,
-            patch==null?release.digest:patch.digest,patch==null?"":patch.base,metered);
+            patch==null?release.digest:patch.digest,patch==null?"":patch.base,metered,release.downloadUrl);
     }
     synchronized Job fallback(Job old)throws Exception{
         if(!old.patch)throw new IOException("Tam APK zaten seçili.");
         clear(old);
-        return enqueue(old.code,old.name,old.size,old.digest,ReleaseClient.DOWNLOAD+"v"+old.name+"/Image-Downloader.apk",
-            old.size,old.digest,"",false);
+        return enqueue(old.code,old.name,old.size,old.digest,old.apkUrl,
+            old.size,old.digest,"",false,old.apkUrl);
     }
-    private Job enqueue(long code,String name,long size,String digest,String url,long transferSize,String transferDigest,String base,boolean metered)throws Exception{
-        if(!name.matches("[0-9]+[.][0-9]+[.][0-9]+-[0-9a-f]{8,40}")||size<=0||size>ApkDelta.MAX||
+    private Job enqueue(long code,String name,long size,String digest,String url,long transferSize,String transferDigest,String base,boolean metered,String apkUrl)throws Exception{
+        if(!(apkUrl.equals(ReleaseClient.DOWNLOAD+"v"+name+"/Image-Downloader.apk")||apkUrl.equals(ReleaseClient.DOWNLOAD+"v"+name+"/Image-Downloader-arm64-v8a.apk"))||!name.matches("[0-9]+[.][0-9]+[.][0-9]+-[0-9a-f]{8,40}")||size<=0||size>ApkDelta.MAX||
                 transferSize<=0||transferSize>size||!digest.matches("sha256:[a-fA-F0-9]{64}")||
                 !transferDigest.matches("sha256:[a-fA-F0-9]{64}"))throw new IOException("Geçersiz güncelleme bilgisi.");
         Job old=current();
@@ -98,7 +98,7 @@ final class UpdateDownload {
         if(!prefs.edit().putLong("id",id).putLong("size",size).putLong("code",code)
                 .putString("name",name).putString("digest",digest).putString("file",path)
                 .putLong("transferSize",transferSize).putString("transferDigest",transferDigest)
-                .putString("base",base).putBoolean("metered",metered).commit()){
+                .putString("base",base).putString("apkUrl",apkUrl).putBoolean("metered",metered).commit()){
             manager.remove(id);throw new IOException("Güncelleme durumu kaydedilemedi.");
         }
         return current();
