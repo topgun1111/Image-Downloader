@@ -10,6 +10,7 @@ import java.util.regex.*;
 
 final class Search {
     private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36";
+    static final String WIKI_UA="ImageDownloaderAndroid/1.2 (https://github.com/topgun1111/Image-Downloader)";
     private static final Pattern GOOGLE_PAIR = Pattern.compile("\\[\\s*(\"https?[^\"]+\")\\s*,\\s*\\d+\\s*,\\s*\\d+\\s*\\]\\s*,\\s*\\[\\s*(\"https?[^\"]+\")\\s*,\\s*\\d+\\s*,\\s*\\d+");
     static boolean web(String url) {
         try {
@@ -21,7 +22,8 @@ final class Search {
     static HttpURLConnection open(String url) throws IOException {
         if (!web(url)) throw new IOException("Geçersiz görsel adresi.");
         HttpURLConnection c = (HttpURLConnection)new URL(url).openConnection();
-        c.setRequestProperty("User-Agent",UA);
+        String h=host(url);
+        c.setRequestProperty("User-Agent",h.equals("wikimedia.org")||h.endsWith(".wikimedia.org")?WIKI_UA:UA);
         c.setRequestProperty("Accept-Language","tr-TR,tr;q=0.9");
         c.setConnectTimeout(8000); c.setReadTimeout(12000);
         return c;

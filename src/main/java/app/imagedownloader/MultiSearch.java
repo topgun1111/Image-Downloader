@@ -102,14 +102,31 @@ final class MultiSearch {
         json(url,"Client-ID "+key);
     }
     private static void commons(String q,int page,Map<String,JSONObject> rows,boolean clean) throws Exception {
-        JSONObject d=json("https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrlimit=35&gsroffset="+(page*35)+"&prop=imageinfo&iiprop=url%7Cmime%7Csize&iiurlwidth=320&format=json&gsrsearch="+Search.enc(q+" filetype:bitmap"),"");
+        JSONObject d=json("https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrlimit=35&gsroffset="+(page*35)+"&prop=imageinfo&iiprop=url%7Cmime%7Csize&iiurlwidth=330&format=json&gsrsearch="+Search.enc(q+" filetype:bitmap"),"");
+        commonsRows(d,rows,clean);
+    }
+    static void commonsRows(JSONObject d,Map<String,JSONObject> rows,boolean clean)throws JSONException {
         JSONObject query=d.optJSONObject("query"),pages=query==null?null:query.optJSONObject("pages");
         if(pages==null)return;
         for(Iterator<String> it=pages.keys();it.hasNext();){
-            JSONObject p=pages.getJSONObject(it.next());JSONArray a=arr(p,"imageinfo");if(a.length()==0)continue;
-            JSONObject o=a.getJSONObject(0);if(!o.optString("mime").startsWith("image/"))continue;
-            add(rows,"commons",o.optString("url"),o.optString("thumburl"),p.optString("title"),o.optString("descriptionurl"),o.optInt("width"),o.optInt("height"),clean);
+            JSONObject p=pages.getJSONObject(it.next());
+            if(p.optInt("ns",-1)!=6||!p.optString("title").startsWith("File:"))continue;
+            JSONArray a=arr(p,"imageinfo");if(a.length()==0)continue;
+            JSONObject o=a.getJSONObject(0);
+            String mime=o.optString("mime"),url=o.optString("url"),thumb=o.optString("thumburl");
+            if(!Arrays.asList("image/jpeg","image/png","image/gif","image/webp","image/tiff","image/bmp","image/avif").contains(mime)||!wikiMedia(url))continue;
+            if(!wikiMedia(thumb))thumb=url;
+            add(rows,"commons",url,thumb,p.optString("title").substring(5),o.optString("descriptionurl"),o.optInt("width"),o.optInt("height"),clean);
         }
+    }
+    static boolean wikiMedia(String url){
+        return url.startsWith("https://")&&onDomain(url,"upload.wikimedia.org")&&!url.contains("/wiki/Category:");
+    }
+    static boolean commonsIndexedFile(JSONObject row){
+        if(!wikiMedia(row.optString("url")))return false;
+        String title=row.optString("title").toLowerCase(Locale.ROOT);
+        String page=row.optString("pageUrl").toLowerCase(Locale.ROOT);
+        return !title.startsWith("category:")&&!page.contains("/category:")&&!page.contains("/category%3a")&&!page.contains("/category%253a");
     }
     static void webRows(String id,String html,String base,Map<String,JSONObject> rows,boolean clean) throws JSONException {
         Document doc=Jsoup.parse(html,base);
@@ -177,6 +194,7 @@ final class MultiSearch {
     private static void copy(String id,Map<String,JSONObject> from,Map<String,JSONObject> to,boolean clean,boolean restrict) throws JSONException {
         for(JSONObject o:from.values()){
             String u=o.optString("url"),page=o.optString("pageUrl");
+            if(id.equals("commons")&&!commonsIndexedFile(o))continue;
             String domain=DOMAINS.get(id);
             if(restrict&&!(id.equals("pinterest")?(Search.pinterestHost(u)||Search.pinterestSource(page)):
                 domain!=null&&(onDomain(page,domain)||onDomain(u,domain)||cdn(id,u))))continue;
@@ -231,7 +249,7 @@ final class MultiSearch {
             }
             return out;
         }
-        if(id.equals("commons")){try{commons(q,page,out,clean);}catch(Exception ignored){}if(out.isEmpty())indexed(id,q,page,clean,out);return out;}
+        if(id.equals("commons")){commons(q,page,out,clean);return out;}
         if(id.equals("openverse")){
             apiRows(id,json("https://api.openverse.org/v1/images/?q="+Search.enc(q)+"&page_size=35&page="+(page+1),""),out,clean);return out;
         }

@@ -43,4 +43,16 @@ public class MultiSearchTest {
         try { MultiSearch.run(new JSONObject().put("q","cat").put("providers",new JSONArray())); fail("Empty providers accepted"); }
         catch(java.io.IOException expected){}
     }
+    @Test public void commonsOnlyRealImageFiles() throws Exception {
+        String root="https://upload.wikimedia.org/wikipedia/commons/";
+        JSONObject info=new JSONObject().put("url",root+"a/ab/Test.jpg").put("thumburl",root+"thumb/a/ab/Test.jpg/330px-Test.jpg").put("mime","image/jpeg").put("width",1000).put("height",800);
+        JSONObject pages=new JSONObject().put("1",new JSONObject().put("ns",6).put("title","File:Test.jpg").put("imageinfo",new JSONArray().put(info)))
+            .put("2",new JSONObject().put("ns",14).put("title","Category:Test").put("imageinfo",new JSONArray().put(info)));
+        Map<String,JSONObject> rows=new LinkedHashMap<>();
+        MultiSearch.commonsRows(new JSONObject().put("query",new JSONObject().put("pages",pages)),rows,true);
+        assertEquals(1,rows.size());
+        assertEquals("Test.jpg",rows.values().iterator().next().getString("title"));
+        assertFalse(MultiSearch.commonsIndexedFile(new JSONObject().put("url",root+"a/ab/Test.jpg").put("title","Category:Test")));
+        assertFalse(MultiSearch.wikiMedia("https://upload.wikimedia.org.evil.example/a.jpg"));
+    }
 }

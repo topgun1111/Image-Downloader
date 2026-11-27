@@ -31,6 +31,7 @@ public final class MainActivity extends Activity {
         });
         WebSettings settings=view.getSettings();
         settings.setJavaScriptEnabled(true); settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);
+        settings.setUserAgentString(settings.getUserAgentString()+" "+Search.WIKI_UA);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
         view.setWebViewClient(new WebViewClient(){
             @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest req){
