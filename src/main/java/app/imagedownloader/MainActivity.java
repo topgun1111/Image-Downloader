@@ -15,7 +15,8 @@ import java.net.*;
 public final class MainActivity extends Activity {
     private static final String PAGE="https://gallery.invalid/index.html";
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
-    private final Map<String,String[]> known=new HashMap<>();
+    private final ExecutorService downloads=Executors.newSingleThreadExecutor();
+    private final Map<String,String[]> known=new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer,SearchCancellation> searches=new ConcurrentHashMap<>();
     private WebView view;
     private VisualAI visual;
@@ -64,7 +65,7 @@ public final class MainActivity extends Activity {
             if(worker.isShutdown()) return;
             final SearchCancellation token=action.equals("search")?new SearchCancellation():null;
             if(token!=null)searches.put(id,token);
-            try{worker.execute(()->{
+            try{(action.equals("save")?downloads:worker).execute(()->{
                 JSONObject answer;
                 try {
                     if(token!=null)token.enter();
@@ -78,7 +79,19 @@ public final class MainActivity extends Activity {
                         int session=req.optInt("session",-1);
                         if(session>=0?session!=lastSearchSession:req.optInt("page",0)==0){known.clear();visualHashes.clear();lastSearchSession=session;}
                         SearchCancellation.check();
-                        answer=req.has("providers")?MultiSearch.run(req):Search.run(req);
+                        answer=req.has("providers")?MultiSearch.run(req,rows->{
+                            SearchCancellation.check();
+                            JSONArray preview=new JSONArray();
+                            String q=req.getString("q"),mode=req.optString("precision","strict");
+                            for(int i=0;i<rows.length();i++){
+                                JSONObject row=rows.getJSONObject(i);
+                                if(Relevance.admit(q,row,mode,null)){
+                                    row.put("relevance",Relevance.rank(q,row,null)).put("preliminary",true);
+                                    preview.put(row);
+                                }
+                            }
+                            if(preview.length()>0){register(preview,req);progress(id,new JSONObject().put("rows",preview));}
+                        }):Search.run(req);
                         SearchCancellation.check();
                         if(req.has("providers")){
                             String mode=req.optString("precision","strict");
@@ -206,6 +219,6 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onDestroy(){
         for(SearchCancellation token:searches.values())token.cancel();
-        try{worker.execute(()->visual.close());}catch(Exception ignored){}worker.shutdown();view.removeJavascriptInterface("Gallery");view.destroy();super.onDestroy();
+        try{worker.execute(()->visual.close());}catch(Exception ignored){}worker.shutdown();downloads.shutdownNow();view.removeJavascriptInterface("Gallery");view.destroy();super.onDestroy();
     }
 }

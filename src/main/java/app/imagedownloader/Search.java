@@ -26,7 +26,9 @@ final class Search {
         String h=host(url);
         c.setRequestProperty("User-Agent",h.equals("wikimedia.org")||h.endsWith(".wikimedia.org")?WIKI_UA:UA);
         c.setRequestProperty("Accept-Language","tr-TR,tr;q=0.9");
-        c.setConnectTimeout(8000); c.setReadTimeout(12000);
+        // Only search requests use the shorter initial network budget; downloads keep their existing timeout.
+        boolean searching=SearchCancellation.current()!=null;
+        c.setConnectTimeout(searching?5000:8000); c.setReadTimeout(searching?8000:12000);
         SearchCancellation.track(c);
         return c;
     }
@@ -214,16 +216,8 @@ final class Search {
             }
             if(page==0 && rows.isEmpty()) throw new IOException(pinterest?"Doğrulanmış Pinterest görseli bulunamadı.":"Görsel bağlantısı bulunamadı.");
         } catch(Exception err) {
-            if(pinterest || page!=0 || !req.optBoolean("commons") || !key.isEmpty()) throw new IOException(source+" araması tamamlanamadı. "+safeError(err));
-            notice=source+" sonuç vermedi.";source="Wikimedia Commons";more=false;rows.clear();
-            JSONObject data=new JSONObject(read("https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrlimit=20&prop=imageinfo&iiprop=url%7Cmime&iiurlwidth=320&format=json&gsrsearch="+enc(q+" filetype:bitmap")));
-            if(data.has("error")) throw new IOException("Wikimedia araması tamamlanamadı.");
-            JSONObject query=data.optJSONObject("query"), pages=query==null?null:query.optJSONObject("pages");
-            if(pages!=null) for(Iterator<String> it=pages.keys();it.hasNext();){
-                JSONObject p=pages.getJSONObject(it.next());JSONArray a=p.optJSONArray("imageinfo");
-                if(a==null||a.length()==0) continue;
-                JSONObject o=a.getJSONObject(0);if(o.optString("mime").startsWith("image/")) add(rows,o.optString("url"),o.optString("thumburl"),p.optString("title"));
-            }
+            throw new IOException(source+" araması tamamlanamadı. "+safeError(err));
+
         }
         return new JSONObject().put("rows",new JSONArray(rows.values())).put("source",source)
                 .put("notice",notice).put("more",more&&!rows.isEmpty());

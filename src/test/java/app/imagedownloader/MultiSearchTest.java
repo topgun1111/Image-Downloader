@@ -39,6 +39,18 @@ public class MultiSearchTest {
         assertEquals(1200,rows.values().iterator().next().getInt("width"));
         assertEquals("cc-by",rows.values().iterator().next().getString("license"));
     }
+    @Test public void excludesWikimediaAndCachesIndependentCopies() throws Exception {
+        assertFalse(Arrays.asList(MultiSearch.IDS).contains("commons"));
+        assertFalse(Arrays.asList(MultiSearch.IDS).contains("wikimedia"));
+        assertTrue(MultiSearch.excludedSource(new JSONObject().put("url","https://upload.wikimedia.org/a.jpg")));
+        assertTrue(MultiSearch.excludedSource(new JSONObject().put("pageUrl","https://en.wikipedia.org/wiki/Cat")));
+        assertFalse(MultiSearch.excludedSource(new JSONObject().put("url","https://wikimedia.org.example.com/a.jpg")));
+        Map<String,JSONObject> rows=new LinkedHashMap<>();
+        rows.put("https://example.org/a.jpg",new JSONObject().put("url","https://example.org/a.jpg").put("title","Cat"));
+        MultiSearch.remember("test-cache",rows);
+        MultiSearch.cached("test-cache").values().iterator().next().put("title","Changed");
+        assertEquals("Cat",MultiSearch.cached("test-cache").values().iterator().next().getString("title"));
+    }
     @Test public void noProvidersIsInvalid() throws Exception {
         try { MultiSearch.run(new JSONObject().put("q","cat").put("providers",new JSONArray())); fail("Empty providers accepted"); }
         catch(java.io.IOException expected){}

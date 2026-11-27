@@ -10,8 +10,41 @@ import java.util.concurrent.*;
 import java.util.regex.*;
 
 final class MultiSearch {
-    static final String[] IDS={"bing","google","yandex","pinterest","commons","openverse","flickr","pexels","pixabay","unsplash","deviantart","artstation","freepik","stocksnap","rawpixel","wikimedia","duckduckgo","deepweb","officialmedia","fangalleries"};
+    static final String[] IDS={"bing","google","yandex","pinterest","openverse","flickr","pexels","pixabay","unsplash","deviantart","artstation","freepik","stocksnap","rawpixel","duckduckgo","deepweb","officialmedia","fangalleries"};
     private static final int LIMIT=45;
+    private static final long CACHE_TTL=TimeUnit.MINUTES.toNanos(3);
+    private static final Map<String,Long> timings=new ConcurrentHashMap<>();
+    private static final Map<String,Cached> cache=new LinkedHashMap<String,Cached>(32,.75f,true){
+        @Override protected boolean removeEldestEntry(Map.Entry<String,Cached> e){return size()>64;}
+    };
+    private static final class Cached {
+        final long time=System.nanoTime();final String rows;
+        Cached(Map<String,JSONObject> data){rows=new JSONArray(data.values()).toString();}
+    }
+    static boolean excludedSource(JSONObject row){
+        for(String key:new String[]{"url","thumb","fallback","pageUrl"}){
+            String url=row.optString(key);
+            if(onDomain(url,"wikimedia.org")||onDomain(url,"wikipedia.org"))return true;
+        }
+        return false;
+    }
+    static synchronized Map<String,JSONObject> cached(String key)throws JSONException{
+        Cached c=cache.get(key);
+        if(c==null)return null;
+        if(System.nanoTime()-c.time>CACHE_TTL){cache.remove(key);return null;}
+        Map<String,JSONObject> rows=new LinkedHashMap<>();
+        JSONArray a=new JSONArray(c.rows);
+        for(int i=0;i<a.length();i++){JSONObject row=a.getJSONObject(i);rows.put(row.getString("url"),row);}
+        return rows;
+    }
+    static synchronized void remember(String key,Map<String,JSONObject> rows){
+        if(!rows.isEmpty())cache.put(key,new Cached(rows));
+    }
+    private static long priority(String id){
+        long fallback=Arrays.asList("bing","google","yandex","pinterest","openverse").contains(id)?1500:6000;
+        return timings.getOrDefault(id,fallback);
+    }
+    interface Partial {void accept(JSONArray rows)throws Exception;}
     private static final Pattern PIN=Pattern.compile("https?://i\\.pinimg\\.com/(?:originals|[0-9]{2,4}x(?:[0-9]+)?)/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{16,64}\\.(?:jpe?g|png|webp|gif|avif)",Pattern.CASE_INSENSITIVE);
     static final Map<String,String> DOMAINS=new LinkedHashMap<>();
     static {
@@ -251,7 +284,7 @@ final class MultiSearch {
             }
             return out;
         }
-        if(id.equals("commons")){commons(q,page,out,clean);return out;}
+        if(id.equals("commons")||id.equals("wikimedia"))return out;
         if(id.equals("openverse")){
             apiRows(id,json("https://api.openverse.org/v1/images/?q="+Search.enc(q)+"&page_size=35&page="+(page+1),""),out,clean);return out;
         }
@@ -297,7 +330,8 @@ final class MultiSearch {
         }
         return out;
     }
-    static JSONObject run(JSONObject req)throws Exception{
+    static JSONObject run(JSONObject req)throws Exception{return run(req,rows->{});}
+    static JSONObject run(JSONObject req,Partial partial)throws Exception{
         String q=req.optString("q").trim();int page=req.optInt("page",0);
         if(q.isEmpty()||q.length()>256||page<0||page>1000)throw new IOException("Geçersiz arama.");
         JSONArray chosen=req.optJSONArray("providers");
@@ -307,7 +341,7 @@ final class MultiSearch {
         if(ids.isEmpty())throw new IOException("En az bir kaynak seçin.");
         JSONObject keys=req.optJSONObject("keys");final JSONObject credentials=keys==null?new JSONObject():keys;
         boolean clean=req.optBoolean("clean",true),pinterestOnly=req.optBoolean("pinterest",false);
-        ExecutorService pool=Executors.newFixedThreadPool(Math.min(10,ids.size()));
+        ExecutorService pool=Executors.newFixedThreadPool(Math.min(12,ids.size()));
         CompletionService<Map<String,JSONObject>> completion=new ExecutorCompletionService<>(pool);
         Map<Future<Map<String,JSONObject>>,String> pending=new HashMap<>();
         Map<String,Map<String,JSONObject>> byId=new LinkedHashMap<>();
@@ -315,13 +349,19 @@ final class MultiSearch {
         JSONObject cursors=req.optJSONObject("cursors"),nextCursors=new JSONObject();
         final SearchCancellation cancellation=SearchCancellation.current();
         try{
-            for(String id:ids){
+            List<String> scheduled=new ArrayList<>(ids);scheduled.sort(Comparator.comparingLong(MultiSearch::priority));
+            for(String id:scheduled){
                 JSONObject state=cursors==null?null:cursors.optJSONObject(id);
                 final int position=state==null?page:Math.max(0,Math.min(1000,state.optInt("page",page)));
                 pending.put(completion.submit(()->{
                 if(cancellation!=null)cancellation.enter();
                 try{
                 SearchCancellation.check();
+                String cacheKey=new JSONArray().put(id).put(q).put(position).put(clean).put(pinterestOnly)
+                    .put(credentials.optString("serpapi")).put(credentials.optString("pexels"))
+                    .put(credentials.optString("pixabay")).put(credentials.optString("unsplash")).toString();
+                Map<String,JSONObject> previous=cached(cacheKey);if(previous!=null)return previous;
+                long started=System.nanoTime();
                 Map<String,JSONObject> rows=provider(id,q,position,clean,credentials,pinterestOnly);
                 if(!Relevance.useful(q,rows)&&!Thread.currentThread().isInterrupted()&&Arrays.asList("bing","google","yandex").contains(id)){
                     try{
@@ -329,7 +369,11 @@ final class MultiSearch {
                         if(Relevance.useful(q,alternate)||rows.isEmpty())rows=alternate;
                     }catch(Exception ignored){}
                 }
-                SearchCancellation.check();return rows;
+                SearchCancellation.check();
+                rows.values().removeIf(MultiSearch::excludedSource);
+                long elapsed=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);
+                timings.merge(id,Math.max(1,elapsed),(old,value)->(old*3+value)/4);
+                remember(cacheKey,rows);return rows;
                 }finally{if(cancellation!=null)cancellation.leave();}
             }),id);}
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(65);
@@ -341,6 +385,7 @@ final class MultiSearch {
                 try{
                     Map<String,JSONObject> rows=f.get();byId.put(id,rows);status.put(id,rows.size());
                     advance(id,rows,cursors,nextCursors,next,page,q);
+                    if(!rows.isEmpty())partial.accept(new JSONArray(new JSONArray(rows.values()).toString()));
                 }catch(Exception e){status.put(id,-1);advance(id,null,cursors,nextCursors,next,page,q);}
             }
             for(String id:pending.values()){status.put(id,-1);advance(id,null,cursors,nextCursors,next,page,q);}

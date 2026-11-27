@@ -122,9 +122,9 @@ final class VisualAI implements AutoCloseable {
         throw new IOException("Çok fazla yönlendirme.");
     }
     static final class Sample {final float[] vector;final long hash;Sample(float[] v,long h){vector=v;hash=h;}}
-    private Sample sample(String url,boolean embed)throws Exception{
+    private Sample sample(String url,boolean embed,byte[] data)throws Exception{
         String key=(embed?"ai:":"hash:")+url;Sample old=cache.get(key);if(old!=null)return old;
-        byte[] data=imageBytes(url);
+        if(data==null)throw new IOException("Önizleme alınamadı.");
         BitmapFactory.Options o=new BitmapFactory.Options();o.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(data,0,data.length,o);
         if(o.outWidth<96||o.outHeight<96)throw new IOException("Küçük görsel.");
         o.inJustDecodeBounds=false;o.inSampleSize=1;
@@ -160,15 +160,41 @@ final class VisualAI implements AutoCloseable {
         JSONArray result=new JSONArray(),batch=new JSONArray();
         int evaluated=0,limit=mode.equals("ultra")?100:mode.equals("strict")?65:45;
         long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(55);
-        for(JSONObject row:candidates){
+        // Fetch up to three previews concurrently, but retain single-threaded ONNX inference
+        // and deterministic duplicate filtering. No model session is used by network workers.
+        java.util.concurrent.ExecutorService previews=java.util.concurrent.Executors.newFixedThreadPool(3);
+        Map<Integer,java.util.concurrent.Future<byte[]>> pending=new HashMap<>();
+        SearchCancellation cancellation=SearchCancellation.current();
+        int scheduled=0;
+        final boolean nameQuery=Relevance.strictName(q);
+        try{
+        for(int index=0;index<candidates.size();index++){
+            JSONObject row=candidates.get(index);
             SearchCancellation.check();
+            while((active||duplicates)&&pending.size()<3&&scheduled<candidates.size()&&evaluated+pending.size()<limit&&System.nanoTime()<deadline){
+                int next=scheduled++;JSONObject candidate=candidates.get(next);
+                if(next<index||nameQuery&&!Relevance.admit(q,candidate,mode,null))continue;
+                String url=candidate.optString("thumb",candidate.optString("url"));
+                boolean embed=active&&(!nameQuery||sportsName);
+                if(cache.containsKey((embed?"ai:":"hash:")+url))continue;
+                pending.put(next,previews.submit(()->{
+                    if(cancellation!=null)cancellation.enter();
+                    try{return imageBytes(url);}finally{if(cancellation!=null)cancellation.leave();}
+                }));
+            }
             Double visual=null;Sample sample=null;
             // A name must have metadata evidence; never use image vectors to identify a person.
             boolean name=Relevance.strictName(q);
             if(name&&!Relevance.admit(q,row,mode,null))continue;
             if((active||duplicates)&&evaluated<limit&&System.nanoTime()<deadline){
                 evaluated++;
-                try{sample=sample(row.optString("thumb",row.optString("url")),active&&(!name||sportsName));if(active&&sample.vector!=null)visual=cosine(name?sports:target,sample.vector);}catch(Exception ignored){}
+                java.util.concurrent.Future<byte[]> future=pending.remove(index);
+                try{
+                    String url=row.optString("thumb",row.optString("url"));
+                    byte[] bytes=future==null?null:future.get(Math.max(1,deadline-System.nanoTime()),java.util.concurrent.TimeUnit.NANOSECONDS);
+                    sample=sample(url,active&&(!name||sportsName),bytes);
+                    if(active&&sample.vector!=null)visual=cosine(name?sports:target,sample.vector);
+                }catch(Exception ignored){if(future!=null)future.cancel(true);}
             }
             SearchCancellation.check();
             if(!Relevance.admit(q,row,mode,visual))continue;
@@ -185,6 +211,7 @@ final class VisualAI implements AutoCloseable {
         SearchCancellation.check();
         if(batch.length()>0)emit.accept(batch);
         return result;
+        }finally{for(java.util.concurrent.Future<?> f:pending.values())f.cancel(true);previews.shutdownNow();}
     }
     private void closeSessions(){if(text!=null)try{text.close();}catch(Exception ignored){}if(vision!=null)try{vision.close();}catch(Exception ignored){}text=null;vision=null;tokenizer=null;queries.clear();}
     @Override public void close(){closeSessions();cache.clear();}
