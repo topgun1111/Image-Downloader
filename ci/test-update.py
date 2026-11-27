@@ -2,6 +2,7 @@
 import os
 import re
 import subprocess
+import sys
 import time
 import xml.etree.ElementTree as ET
 
@@ -36,7 +37,10 @@ def tap(label, *, resource=False, timeout=75, click=True, optional=False):
     raise RuntimeError("Expected Android control did not appear: " + label)
 
 
-old = os.path.join(os.environ["RUNNER_TEMP"], "previous", "Image-Downloader.apk")
+baseline = "--background-baseline" in sys.argv
+if baseline:
+    adb("uninstall", PACKAGE)
+old = os.path.join(os.environ["RUNNER_TEMP"], "baseline.apk") if baseline else os.path.join(os.environ["RUNNER_TEMP"], "previous", "Image-Downloader.apk")
 adb("install", old)
 adb("shell", "appops", "set", PACKAGE, "REQUEST_INSTALL_PACKAGES", "allow")
 adb("shell", "am", "start", "-n", PACKAGE + "/.MainActivity")
@@ -56,6 +60,8 @@ else:
     tap("Güncellemeleri kontrol et")
     # New updaters expose the persistent background download capability.
     background = tap("Güncellemeler GitHub Releases üzerinden indirilir. İndirme arka planda devam eder.", timeout=3, click=False, optional=True)
+    if baseline and not background:
+        raise RuntimeError("Background updater not detected in the signed test baseline")
     tap("İndir ve kur")
     if background:
         adb("shell", "input", "keyevent", "KEYCODE_HOME")
@@ -63,11 +69,13 @@ else:
             adb("shell", "wm", "size", "1600x1200")
             adb("shell", "wm", "density", "240")
             time.sleep(5)
+            adb("shell", "am", "kill", PACKAGE)
             adb("shell", "am", "start", "-n", PACKAGE + "/.MainActivity")
             # The existing task may reopen the settings activity or the gallery.
             if tap("Ayarlar", timeout=5, optional=True):
                 pass
             tap("Güncellemeyi kur", timeout=180)
+            print("PASS: background download recovered after display size/density changes and background process kill")
         finally:
             adb("shell", "wm", "size", "reset")
             adb("shell", "wm", "density", "reset")

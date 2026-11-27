@@ -103,7 +103,7 @@ jobs:
     if: github.event.repository.private == false && (contains(github.event.head_commit.message, '[test-update]') || github.event_name == 'workflow_dispatch')
     needs: release
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     permissions:
       contents: read
     steps:
@@ -124,6 +124,32 @@ jobs:
           test -s "$RUNNER_TEMP/previous/Image-Downloader.apk"
           curl -fsSL --retry 3 "https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/Image-Downloader.apk" -o "$RUNNER_TEMP/current.apk"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Set up Java for background updater test
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build signed older-version baseline with the new updater
+        env:
+          ANDROID_RELEASE_KEY_PEM: ${{ secrets.ANDROID_RELEASE_KEY_PEM }}
+        run: |
+          set -eu
+          trap 'rm -f "$RUNNER_TEMP/signer.pk8" "$RUNNER_TEMP/signer.der"' EXIT
+          curl -fsSL --retry 3 https://services.gradle.org/distributions/gradle-8.9-bin.zip -o "$RUNNER_TEMP/gradle.zip"
+          checksum=$(curl -fsSL --retry 3 https://services.gradle.org/distributions/gradle-8.9-bin.zip.sha256)
+          echo "$checksum  $RUNNER_TEMP/gradle.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
+          count=$(git rev-list --count HEAD)
+          # Shallow checkout has only one commit; extract the release code from VERSION.
+          count=$(echo "$VERSION" | cut -d- -f1 | awk -F. '{print $NF}')
+          baseline=$((count-1))
+          test "$baseline" -gt 0
+          "$RUNNER_TEMP/gradle-8.9/bin/gradle" assembleRelease -PcommitCount="$baseline" -PappVersion="1.2.$baseline-00000000"
+          /usr/bin/python3 ci/release-signing.py
+          tools="$ANDROID_HOME/build-tools/35.0.0"
+          "$tools/zipalign" -f -P 16 4 build/outputs/apk/release/*-unsigned.apk "$RUNNER_TEMP/baseline-aligned.apk"
+          "$tools/apksigner" sign --key "$RUNNER_TEMP/signer.pk8" --cert "$RUNNER_TEMP/signer.der" --out "$RUNNER_TEMP/baseline.apk" "$RUNNER_TEMP/baseline-aligned.apk"
+          "$tools/apksigner" verify "$RUNNER_TEMP/baseline.apk"
       - name: Enable emulator acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -136,4 +162,4 @@ jobs:
           arch: x86_64
           target: google_apis
           disable-animations: true
-          script: python3 ci/test-update.py
+          script: python3 ci/test-update.py && python3 ci/test-update.py --background-baseline
