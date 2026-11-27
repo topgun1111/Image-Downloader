@@ -5,8 +5,8 @@
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.updates" android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/update_paths"/>
         </provider>
-        <activity android:name=".UpdateSettings" android:exported="false"/>
-        <activity android:name=".MainActivity" android:exported="true" android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout">
+        <activity android:name=".UpdateSettings" android:exported="false" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|density|touchscreen|navigation"/>
+        <activity android:name=".MainActivity" android:exported="true" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|density|touchscreen|navigation" android:resizeableActivity="true">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>
     </application>

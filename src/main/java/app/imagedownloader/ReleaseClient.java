@@ -107,6 +107,22 @@ final class ReleaseClient {
             return target;
         }finally{temp.delete();}
     }
+    static void verifyDownloaded(Context ctx,File file,long size,String digest,long code,String name)throws Exception{
+        if(size<=0||size>MAX_APK||file.length()!=size||!digest.matches("sha256:[a-fA-F0-9]{64}"))
+            throw new IOException("APK boyutu veya dosya özeti bilgisi uyuşmuyor.");
+        MessageDigest md=MessageDigest.getInstance("SHA-256");
+        try(InputStream in=new FileInputStream(file)){
+            byte[] b=new byte[65536];int n;
+            while((n=in.read(b))!=-1){
+                if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();
+                md.update(b,0,n);
+            }
+        }
+        StringBuilder hex=new StringBuilder("sha256:");
+        for(byte b:md.digest())hex.append(String.format(java.util.Locale.ROOT,"%02x",b&255));
+        if(!digest.equalsIgnoreCase(hex.toString()))throw new IOException("Dosya özeti uyuşmuyor.");
+        validate(ctx,file,code,name);
+    }
     static void validate(Context ctx,File file,long code,String name) throws Exception {
         PackageManager pm=ctx.getPackageManager();
         PackageInfo installed=pm.getPackageInfo(ctx.getPackageName(),PackageManager.GET_SIGNING_CERTIFICATES);

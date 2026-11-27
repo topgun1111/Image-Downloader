@@ -54,7 +54,23 @@ if tap("android.widget.EditText", timeout=8, click=False, optional=True):
     print("PASS: manual migration and anonymous update check; in-app install requires the next release")
 else:
     tap("Güncellemeleri kontrol et")
+    # New updaters expose the persistent background download capability.
+    background = tap("Güncellemeler GitHub Releases üzerinden indirilir. İndirme arka planda devam eder.", timeout=3, click=False, optional=True)
     tap("İndir ve kur")
+    if background:
+        adb("shell", "input", "keyevent", "KEYCODE_HOME")
+        try:
+            adb("shell", "wm", "size", "1600x1200")
+            adb("shell", "wm", "density", "240")
+            time.sleep(5)
+            adb("shell", "am", "start", "-n", PACKAGE + "/.MainActivity")
+            # The existing task may reopen the settings activity or the gallery.
+            if tap("Ayarlar", timeout=5, optional=True):
+                pass
+            tap("Güncellemeyi kur", timeout=180)
+        finally:
+            adb("shell", "wm", "size", "reset")
+            adb("shell", "wm", "density", "reset")
     tap("android:id/button1", resource=True)
     deadline = time.monotonic() + 90
     while time.monotonic() < deadline:
