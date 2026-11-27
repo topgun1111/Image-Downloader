@@ -31,21 +31,24 @@ final class ReleaseClient {
         final String name,digest,downloadUrl,filename;
         final JSONArray assets;
         Release(JSONObject json) throws Exception {this(json,false);}
-        Release(JSONObject json,boolean arm64) throws Exception {
+        Release(JSONObject json,boolean arm64) throws Exception {this(json,arm64,false);}
+        Release(JSONObject json,boolean arm64,boolean light) throws Exception {
             String tag=json.getString("tag_name");
             Matcher m=TAG.matcher(tag);
             if(!m.matches()||json.optBoolean("draft")||json.optBoolean("prerelease"))
                 throw new IOException("Güncellenebilir bir kararlı sürüm bulunamadı.");
             name=tag.substring(1); code=Integer.parseInt(m.group(1));
             assets=json.getJSONArray("assets");
-            JSONObject apk=null,optimized=null;
+            JSONObject apk=null,optimized=null,lite=null;
             for(int i=0;i<assets.length();i++){
                 JSONObject a=assets.getJSONObject(i);
                 if("Image-Downloader.apk".equals(a.optString("name")) && "uploaded".equals(a.optString("state"))) apk=a;
                 if(arm64&&"Image-Downloader-arm64-v8a.apk".equals(a.optString("name"))&&"uploaded".equals(a.optString("state")))optimized=a;
+                if(arm64&&light&&"Image-Downloader-arm64-lite.apk".equals(a.optString("name"))&&"uploaded".equals(a.optString("state")))lite=a;
             }
             if(apk==null)throw new IOException("Sürümün APK dosyası henüz hazır değil.");
             if(optimized!=null&&validAsset(optimized,tag,"Image-Downloader-arm64-v8a.apk")&&optimized.optLong("size")<apk.optLong("size"))apk=optimized;
+            if(lite!=null&&validAsset(lite,tag,"Image-Downloader-arm64-lite.apk")&&lite.optLong("size")<apk.optLong("size"))apk=lite;
             filename=apk.getString("name");
             size=apk.getLong("size");digest=apk.optString("digest");
             downloadUrl=DOWNLOAD+tag+"/"+filename;
@@ -59,7 +62,7 @@ final class ReleaseClient {
         Patch patchFor(String baseDigest){
             if(baseDigest==null||!baseDigest.matches("sha256:[a-f0-9]{64}"))return null;
             String suffix=baseDigest.substring(7)+".idpatch";
-            String[] names=filename.equals("Image-Downloader-arm64-v8a.apk")?
+            String[] names=filename.equals("Image-Downloader-arm64-lite.apk")?new String[]{"delta2-lite-"+suffix}:filename.equals("Image-Downloader-arm64-v8a.apk")?
                 new String[]{"delta2-arm64-"+suffix}:new String[]{"delta2-"+suffix,"delta-"+suffix};
             Patch best=null;
             for(String candidate:names)for(int i=0;i<assets.length();i++){
@@ -103,7 +106,7 @@ final class ReleaseClient {
                 if(out.size()+n>1024*1024)throw new IOException("Sürüm bilgisi çok büyük.");
                 out.write(b,0,n);
             }
-            return new Release(new JSONObject(out.toString(StandardCharsets.UTF_8.name())),android.os.Build.SUPPORTED_ABIS.length>0&&"arm64-v8a".equals(android.os.Build.SUPPORTED_ABIS[0]));
+            return new Release(new JSONObject(out.toString(StandardCharsets.UTF_8.name())),android.os.Build.SUPPORTED_ABIS.length>0&&"arm64-v8a".equals(android.os.Build.SUPPORTED_ABIS[0]),!TranslationEngine.available());
         }finally{c.disconnect();}
     }
     interface Progress { void percent(int percent); }

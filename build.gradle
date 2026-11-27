@@ -1,4 +1,5 @@
 plugins { id 'com.android.application' version '8.7.3' }
+def fullTranslation = providers.gradleProperty('translationRuntime').getOrElse('true').toBoolean()
 android {
     namespace 'app.imagedownloader'
     compileSdk 35
@@ -13,6 +14,7 @@ android {
         versionCode providers.gradleProperty('commitCount').orElse(providers.exec { commandLine 'git', 'rev-list', '--count', 'HEAD' }.standardOutput.asText.map { it.trim() }).get().toInteger()
         versionName providers.gradleProperty('appVersion').getOrElse("1.2.${versionCode}-local")
     }
+    sourceSets { main.java.srcDir(fullTranslation ? 'src/fullTranslation/java' : 'src/lightTranslation/java') }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
@@ -27,12 +29,14 @@ dependencies {
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
     implementation 'org.jsoup:jsoup:1.18.3'
-    implementation 'com.google.mlkit:language-id:17.0.6'
-    implementation 'com.google.mlkit:translate:17.0.3'
-    // Kotlin 1.8 merged the JDK extensions into stdlib; align ML Kit's older transitives.
-    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
-    implementation 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
-    implementation 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
+    if (fullTranslation) {
+        implementation 'com.google.mlkit:language-id:17.0.6'
+        implementation 'com.google.mlkit:translate:17.0.3'
+        // Kotlin 1.8 merged the JDK extensions into stdlib; align ML Kit's older transitives.
+        implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.22')
+        implementation 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
+        implementation 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
+    }
     implementation 'androidx.core:core:1.13.1'
     implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.20.0'
 }

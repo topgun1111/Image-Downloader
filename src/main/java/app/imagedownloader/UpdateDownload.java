@@ -73,7 +73,7 @@ final class UpdateDownload {
             old.size,old.digest,"",false,old.apkUrl);
     }
     private Job enqueue(long code,String name,long size,String digest,String url,long transferSize,String transferDigest,String base,boolean metered,String apkUrl)throws Exception{
-        if(!(apkUrl.equals(ReleaseClient.DOWNLOAD+"v"+name+"/Image-Downloader.apk")||apkUrl.equals(ReleaseClient.DOWNLOAD+"v"+name+"/Image-Downloader-arm64-v8a.apk"))||!name.matches("[0-9]+[.][0-9]+[.][0-9]+-[0-9a-f]{8,40}")||size<=0||size>ApkDelta.MAX||
+        if(!(apkUrl.equals(ReleaseClient.DOWNLOAD+"v"+name+"/Image-Downloader.apk")||apkUrl.equals(ReleaseClient.DOWNLOAD+"v"+name+"/Image-Downloader-arm64-v8a.apk")||apkUrl.equals(ReleaseClient.DOWNLOAD+"v"+name+"/Image-Downloader-arm64-lite.apk"))||!name.matches("[0-9]+[.][0-9]+[.][0-9]+-[0-9a-f]{8,40}")||size<=0||size>ApkDelta.MAX||
                 transferSize<=0||transferSize>size||!digest.matches("sha256:[a-fA-F0-9]{64}")||
                 !transferDigest.matches("sha256:[a-fA-F0-9]{64}"))throw new IOException("Geçersiz güncelleme bilgisi.");
         Job old=current();

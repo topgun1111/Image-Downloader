@@ -124,13 +124,13 @@ def main():
     parser.add_argument("base", type=Path)
     parser.add_argument("target", type=Path)
     parser.add_argument("directory", type=Path)
-    parser.add_argument("--format", choices=["legacy", "compressed", "arm64"], default="legacy")
+    parser.add_argument("--format", choices=["legacy", "compressed", "arm64", "lite"], default="legacy")
     args = parser.parse_args()
     args.directory.mkdir(parents=True, exist_ok=True)
     if not 0 < args.base.stat().st_size <= MAX:
         raise ValueError("Base size out of range")
     sha = hashlib.sha256(args.base.read_bytes()).hexdigest()
-    prefix = {"legacy":"delta-", "compressed":"delta2-", "arm64":"delta2-arm64-"}[args.format]
+    prefix = {"legacy":"delta-", "compressed":"delta2-", "arm64":"delta2-arm64-", "lite":"delta2-lite-"}[args.format]
     output = args.directory / (prefix + sha + ".idpatch")
     temporary = output.with_suffix(".tmp")
     try:

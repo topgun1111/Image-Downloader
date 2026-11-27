@@ -1,11 +1,7 @@
 package app.imagedownloader;
 import org.json.*;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
-import com.google.android.gms.tasks.Tasks;
-import com.google.mlkit.nl.languageid.*;
-import com.google.mlkit.nl.translate.*;
-import com.google.mlkit.common.model.DownloadConditions;
+
 
 final class SearchLanguages {
     static final String[] CODES="en tr es pt ru de fr it ja zh ko ar hi nl pl id vi th uk fa sv da fi no el cs ro hu he ms bn ta te ur bg hr sk sl lt lv et ca af sq be cy eo ga gl ht is ka mk mt sw tl gu kn mr".split(" ");
@@ -67,25 +63,12 @@ final class SearchLanguages {
             String value=coloring(target);
             if(value!=null)return prefix+" "+value;
         }
-        LanguageIdentifier identifier=null;Translator translator=null;
-        try{
-            identifier=LanguageIdentification.getClient();
-            String source=Tasks.await(identifier.identifyLanguage(body),2,TimeUnit.SECONDS);
-            String from=TranslateLanguage.fromLanguageTag(source),to=TranslateLanguage.fromLanguageTag(target);
-            if(from==null||to==null||from.equals(to))return query;
-            translator=Translation.getClient(new TranslatorOptions.Builder().setSourceLanguage(from).setTargetLanguage(to).build());
-            DownloadConditions.Builder conditions=new DownloadConditions.Builder();
-            if(wifi)conditions.requireWifi();
-            Tasks.await(translator.downloadModelIfNeeded(conditions.build()),5,TimeUnit.SECONDS);
-            String translated=Tasks.await(translator.translate(body),3,TimeUnit.SECONDS);
-            if(translated==null||translated.trim().isEmpty())return query;
-            String result=prefix.isEmpty()?translated:prefix+" "+translated;
-            if(result.length()>256)return query;
-            synchronized(cache){cache.put(key,result);}
-            return result;
-        }catch(InterruptedException e){Thread.currentThread().interrupt();return query;}
-        catch(Exception|LinkageError e){return query;}
-        finally{if(identifier!=null)identifier.close();if(translator!=null)translator.close();}
+        String translated=TranslationEngine.translate(body,target,wifi);
+        if(translated==null||translated.trim().isEmpty())return query;
+        String result=prefix.isEmpty()?translated:prefix+" "+translated;
+        if(result.length()>256)return query;
+        synchronized(cache){cache.put(key,result);}
+        return result;
     }
     static String coloring(String target){
         switch(target){

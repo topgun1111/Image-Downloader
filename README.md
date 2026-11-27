@@ -27,3 +27,5 @@ Sonsuz kaydırma her zaman etkindir; derin keşif varsayılan olarak açıktır.
 
 ## Küçük APK ve yeni delta biçimi
 Universal APK eski kurulumlar için korunur; ARM64 cihazlar yeni güncelleyiciyle daha küçük ARM64 APK'yı otomatik seçer. Aynı paket adı, sürüm ve imza kullanılır. IDP1 yamaları eski güncelleyici için korunur; yeni IDP2 gzip yamaları değişen ZIP girdilerinde eşleşen blokları da kullanır. Tüm yamalar yayımdan önce byte-exact ve imza doğrulamasından geçer. Otomatik çeviri filtrelerden devre dışı bırakılabilir; ML Kit dil modelleri gerektiğinde indirilir, çeviri çalışma zamanı APK'ya dahildir.
+
+ARM64 Lite (`Image-Downloader-arm64-lite.apk`) ayrı, isteğe bağlı bir kurulumdur; ML Kit çalışma zamanı içermez. Dil/ülke hedefleme ve yerleşik yaygın terim çevirileri korunur, genel çevrimdışı çeviri için tam ARM64 sürümü kullanılır. Lite güncelleyicisi yeni Lite APK ve kendi yamalarını tercih eder. Aynı imza ve paket adıyla mevcut kurulum üzerine geçilebilir; sürüm aynıysa Android kurulum onayı gerekir. Tam sürüm hiçbir özelliği kaybetmez.

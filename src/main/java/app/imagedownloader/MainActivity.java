@@ -68,6 +68,7 @@ public final class MainActivity extends Activity {
         view.addJavascriptInterface(new Bridge(),"Gallery");view.loadUrl(PAGE);
     }
     private final class Bridge {
+        @JavascriptInterface public boolean translationRuntimeAvailable(){return TranslationEngine.available();}
         @JavascriptInterface public void showSettings(){
             runOnUiThread(()->{if(!isDestroyed() && PAGE.equals(view.getUrl()))
                 startActivity(new Intent(MainActivity.this,UpdateSettings.class));});
