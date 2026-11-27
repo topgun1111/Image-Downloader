@@ -30,6 +30,8 @@ jobs:
           echo "$checksum  $RUNNER_TEMP/gradle.zip" | sha256sum -c -
           unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/gradle-8.9/bin" >> "$GITHUB_PATH"
+      - name: Test infinite-scroll scheduling
+        run: node ci/test-infinite-scroll.js
       - name: Determine version and build release
         id: version
         run: |

@@ -6,7 +6,11 @@ main{max-width:900px;margin:auto;padding:20px 14px 50px}h1{font-size:28px;margin
 form,.tools,footer,header{display:flex;gap:8px;align-items:center}input:not([type=checkbox]){width:100%;min-width:0;padding:12px;border:1px solid #aab6c8;border-radius:10px;font:inherit}
 button{font:inherit;cursor:pointer;background:#214f85;color:white;border:0;border-radius:10px;padding:10px 13px;min-height:44px}button:disabled{opacity:.55}
 details{margin:12px 0}summary{cursor:pointer;color:#365477}.tools{flex-wrap:wrap;margin:14px 0}.tools button:first-child{background:#e1e9f4;color:#18324a}
-#more{margin:18px auto;display:block}#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(148px,46%),1fr));gap:10px}
+#bottomControls{padding:24px 8px;min-height:84px;text-align:center;color:#365477}
+#feedSpinner{display:inline-block;width:22px;height:22px;vertical-align:middle;border:3px solid #dbe2eb;border-top-color:#214f85;border-radius:50%;animation:feedSpin .8s linear infinite;margin:0 6px}
+@keyframes feedSpin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){#feedSpinner{animation:none}}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(148px,46%),1fr));gap:10px}
 article{content-visibility:auto;contain-intrinsic-size:auto 310px;min-width:0;background:white;border:1px solid #dbe2eb;border-radius:14px;overflow:hidden}
 .photo{display:block;width:100%;padding:0;border-radius:0;background:#e6ecf1;color:#213147}.photo img{width:100%;height:145px;display:block;object-fit:cover}
 article p{margin:9px;font-size:13px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
@@ -30,7 +34,6 @@ main{padding-bottom:92px}
 <p style="font-size:13px">İlk indirmeden sonra analiz cihazda yapılır. Kişi adlarında kaynak bilgisi şarttır. AI kurulmazsa metin filtresi kullanılır.</p>
 <p>Aranacak kaynakları seçin.</p><div class="tools"><button id="selectSources" type="button">Tümünü seç</button><button id="clearSources" type="button">Temizle</button></div>
 <div id="providers" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 12px"></div>
-<label><input type="checkbox" id="autoScroll" checked>Otomatik sonsuz kaydırma</label>
 <label><input type="checkbox" id="deep" checked>Derin web keşfi · resmi siteler ve hayran galerileri</label>
 <label><input type="checkbox" id="clean" checked>Yer tutucuları, ikonları ve çok küçük görselleri ele</label>
 <label><input type="checkbox" id="pinterest">Yalnızca Pinterest (seçili arama motorları dahil)</label>
@@ -43,7 +46,7 @@ main{padding-bottom:92px}
 <p>Boyutu bilinmeyen görseller sona alınır.</p></dialog>
 <details id="sourceDetails" hidden><summary>Kaynak durumları</summary><p id="sourceStatus"></p></details>
 <div class="tools" id="tools" hidden><button id="all">Tümünü seç</button><button id="batch">Seçilenleri indir</button></div>
-<p id="message" role="status"></p><p id="errors" role="alert"></p><section id="grid"></section><div id="bottomControls" style="text-align:center"><button id="more" hidden>Daha fazla göster</button><button id="pauseAuto" hidden type="button">Otomatik yüklemeyi duraklat</button><p id="scrollStatus" role="status"></p></div>
+<p id="message" role="status"></p><p id="errors" role="alert"></p><section id="grid"></section><div id="bottomControls" aria-live="polite"><span id="feedSpinner" hidden aria-hidden="true"></span><p id="scrollStatus" role="status"></p><button id="resumeSearch" hidden type="button">Aramayı sürdür</button></div>
 <dialog id="preview"><header><strong>Önizleme</strong><button id="closePreview">Kapat</button></header><img id="large" alt="Görsel önizlemesi"><p id="caption"></p><button id="savePreview">İndir</button></dialog><button id="stopSearch" type="button" hidden aria-label="Aramayı durdur">■ Durdur</button><button id="jumpTop" type="button" hidden aria-label="Arama alanına dön"><span aria-hidden="true">↑</span> Başa dön</button></main>
 <style>[hidden]{display:none!important}</style><script>
 const el=id=>document.getElementById(id);
@@ -55,7 +58,7 @@ jumpTop.onclick=()=>{window.scrollTo(0,0);updateJumpTop();};
 updateJumpTop();
 const selected=new Set(), cards=new Map();
 let current=null,busy=false,searching=false,activeSearchId=null,stopRequested=false,stopped=false,searchSession=0;
-let sequence=0, searchState=null, nextPage=0, hasMore=false, order=0, autoPaused=false, emptyBatches=0, autoTimer=null;
+let sequence=0, searchState=null, nextPage=0, hasMore=false, order=0, autoPaused=false, emptyBatches=0, autoTimer=null, feedErrors=0;
 const providers={bing:'Bing',google:'Google',yandex:'Yandex',pinterest:'Pinterest',commons:'Wikimedia Commons',openverse:'Openverse',flickr:'Flickr',pexels:'Pexels',pixabay:'Pixabay',unsplash:'Unsplash',deviantart:'DeviantArt',artstation:'ArtStation',freepik:'Freepik',stocksnap:'StockSnap',rawpixel:'Rawpixel',wikimedia:'Wikipedia',duckduckgo:'DuckDuckGo',deepweb:'Derin web',officialmedia:'Resmi medya',fangalleries:'Hayran galerileri'};
 for(const [id,name] of Object.entries(providers)){
  const label=document.createElement('label'),check=document.createElement('input');
@@ -65,11 +68,11 @@ for(const [id,name] of Object.entries(providers)){
 function chosen(){return [...el('providers').querySelectorAll('input:checked')].map(x=>x.value);}
 function filterLabel(){el('filterButton').textContent='Filtre · '+chosen().length+'/'+Object.keys(providers).length;}
 function sources(item){return (item.provider||'').split(',').map(x=>providers[x]||x).join(' · ');}
-function sortCards(keepPosition=false){
+function sortCards(keepPosition=false,fromOrder=0){
  const anchor=keepPosition?document.elementFromPoint(window.innerWidth/2,Math.min(180,window.innerHeight/2))?.closest('article'):null;
  const anchorTop=anchor?anchor.getBoundingClientRect().top:0;
  const mode=el('sort').value,area=x=>x.item.width>0&&x.item.height>0?x.item.width*x.item.height:0;
- const rows=[...cards.values()].sort((a,b)=>{
+ const rows=[...cards.values()].filter(c=>c.order>=fromOrder).sort((a,b)=>{
   if(mode==='large'||mode==='small'){const x=area(a),y=area(b);if(!x||!y)return x? -1:y?1:a.order-b.order;return (mode==='large'?y-x:x-y)||a.order-b.order;}
   if(mode==='rare')return Number(!!b.item.discovery)-Number(!!a.item.discovery)||(b.item.relevance||0)-(a.item.relevance||0)||a.order-b.order;
   if(mode==='name')return a.item.title.localeCompare(b.item.title,'tr')||a.order-b.order;
@@ -112,16 +115,16 @@ el('installModel').onclick=async()=>{
  el('modelStatus').textContent='AI modeli indiriliyor…';
  try{await api('installModel',{},x=>{if(x.message)el('modelStatus').textContent=x.message;});await modelStatus();}
  catch(e){el('modelStatus').textContent='AI kurulamadı: '+e.message;}
- finally{busy=false;el('closeFilters').disabled=false;refresh();}
+ finally{busy=false;el('closeFilters').disabled=false;refresh();scheduleAuto();}
 };
 function refresh(){
- el('stopSearch').hidden=!searching&&!(hasMore&&!autoPaused&&el('autoScroll').checked&&!busy);
+ el('stopSearch').hidden=!searching&&!(hasMore&&!autoPaused&&!busy);
  el('stopSearch').disabled=searching&&stopRequested;
  el('stopSearch').textContent=searching&&stopRequested?'Durduruluyor…':'■ Durdur';
- el('pauseAuto').hidden=!hasMore||!el('autoScroll').checked;
- el('pauseAuto').textContent=autoPaused?'Otomatik yüklemeyi sürdür':'Otomatik yüklemeyi duraklat';
- el('scrollStatus').textContent=stopRequested&&searching?'Arama durduruluyor…':stopped?'Arama durduruldu. Mevcut sonuçlar korunuyor.':busy&&hasMore?'Yeni görseller aranıyor…':autoPaused&&hasMore?'Otomatik yükleme duraklatıldı.':hasMore?'Kaydırarak yeni sonuçlar yükleyebilirsiniz.':cards.size&&!busy?'Kaynakların sonuçları tükendi.':'';
- el('installModel').disabled=busy;el('more').hidden=!hasMore;el('more').disabled=busy;el('filterButton').disabled=busy;el('pinterest').disabled=busy;el('tools').hidden=!cards.size;el('go').disabled=busy;
+ el('feedSpinner').hidden=!searching||stopRequested;
+ el('resumeSearch').hidden=!(autoPaused&&hasMore&&!busy);
+ el('scrollStatus').textContent=stopRequested&&searching?'Arama durduruluyor…':searching?'Yeni görseller yükleniyor…':stopped?'Arama durduruldu. Mevcut sonuçlar korunuyor.':autoPaused&&hasMore?'Arama geçici olarak duraklatıldı.':hasMore?'Kaydırdıkça yeni görseller yüklenir.':searchState&&!busy?'Başka sonuç bulunamadı.':'';
+ el('installModel').disabled=busy;el('filterButton').disabled=busy;el('pinterest').disabled=busy;el('tools').hidden=!cards.size;el('go').disabled=busy;
  el('batch').disabled=busy||!selected.size;el('all').disabled=busy;
  el('all').textContent=selected.size===cards.size?'Seçimi kaldır':'Tümünü seç';
  el('batch').textContent='Seçilenleri indir ('+selected.size+')';
@@ -186,7 +189,7 @@ el('form').onsubmit=async e=>{
  el('message').textContent=selectedProviders.length+' kaynak paralel aranıyor…';el('errors').textContent='';
  el('sourceDetails').hidden=true;
  if(imageWatcher)imageWatcher.disconnect();
- cards.clear();selected.clear();order=0;emptyBatches=0;autoPaused=false;stopped=false;stopRequested=false;hasMore=false;searchSession++;el('grid').replaceChildren();refresh();
+ cancelAutoTimer();cards.clear();selected.clear();order=0;emptyBatches=0;feedErrors=0;autoPaused=false;stopped=false;stopRequested=false;hasMore=false;searchSession++;el('grid').replaceChildren();refresh();
  searchState={q,session:searchSession,providers:selectedProviders,cursors:{},pinterest,clean:el('clean').checked,precision:el('precision').value,ai:el('ai').checked,duplicates:el('duplicates').checked,keys:{serpapi:el('apiKey').value.trim(),pexels:el('pexelsKey').value.trim(),pixabay:el('pixabayKey').value.trim(),unsplash:el('unsplashKey').value.trim()}};
  nextPage=0;hasMore=false;busy=false;await loadPage();
 };
@@ -194,7 +197,7 @@ async function loadPage(){
  if(busy||!searchState)return;
  busy=true;searching=true;stopped=false;stopRequested=false;refresh();el('errors').textContent='';
  try {
-  const before=cards.size;
+  const before=cards.size,firstOrder=order;
   const result=await api('search',{...searchState,page:nextPage},partial=>{
    if(partial.message)el('message').textContent=partial.message;
    if(partial.rows){for(const item of partial.rows)if(!cards.has(item.id))card(item);refresh();el('message').textContent=cards.size+' eşleşen görsel · arama devam ediyor…';}
@@ -204,18 +207,23 @@ async function loadPage(){
   hasMore=result.more&&nextPage<1000;nextPage++;
   if(result.nextProviders)searchState.providers=result.nextProviders;
   if(result.nextCursors)searchState.cursors=result.nextCursors;
+  feedErrors=0;
   emptyBatches=cards.size===before?emptyBatches+1:0;
-  if(emptyBatches>=3)autoPaused=true;
   if(result.status){el('sourceDetails').hidden=false;el('sourceStatus').textContent=Object.entries(result.status).map(([id,count])=>(providers[id]||id)+': '+(count<0?'erişilemedi / zaman aşımı':count===0?'sonuç yok / engelli':count+' görsel')).join(' · ');}
-  sortCards(true);
+  // Keep previous batches fixed; sort only the newly appended batch.
+  sortCards(true,firstOrder);
   el('message').textContent=[result.notice,result.source+' · '+cards.size+' görsel',cards.size===before?(hasMore?'Bu turda yeni görsel bulunamadı.':'Başka sonuç bulunamadı.'):''].filter(Boolean).join(' ');
- } catch(e){autoPaused=true;if(stopRequested){stopped=true;hasMore=true;el('message').textContent='Arama durduruldu · '+cards.size+' görsel';}else{el('errors').textContent=e.message;el('message').textContent=cards.size?cards.size+' görsel':'Arama tamamlanamadı.';}}
+ } catch(e){if(stopRequested){autoPaused=true;stopped=true;hasMore=true;el('message').textContent='Arama durduruldu · '+cards.size+' görsel';}else{
+  feedErrors++;hasMore=!!searchState&&searchState.providers.length>0;
+  if(feedErrors>=3)autoPaused=true;
+  el('errors').textContent=e.message;el('message').textContent=cards.size?cards.size+' görsel':'Arama tamamlanamadı.';
+ }}
  finally{activeSearchId=null;searching=false;stopRequested=false;busy=false;refresh();scheduleAuto();}
 }
 function stopSearch(){
  if(!searching&&(!hasMore||busy))return;
  autoPaused=true;stopped=true;
- if(autoTimer!==null){clearTimeout(autoTimer);autoTimer=null;}
+ cancelAutoTimer();
  if(searching){
   stopRequested=true;
   el('message').textContent='Arama durduruluyor…';
@@ -224,20 +232,36 @@ function stopSearch(){
  }else{el('message').textContent='Arama durduruldu · '+cards.size+' görsel';refresh();}
 }
 el('stopSearch').onclick=stopSearch;
-function scheduleAuto(){
- if(autoTimer!==null)return;
- if(busy||!hasMore||autoPaused||!el('autoScroll').checked||document.hidden||document.querySelector('dialog[open]'))return;
- const nearEnd=el('bottomControls').getBoundingClientRect().top<window.innerHeight+900;
- if(!nearEnd)return;
- autoTimer=setTimeout(()=>{autoTimer=null;if(!busy&&hasMore&&!autoPaused&&el('autoScroll').checked&&!document.hidden&&!document.querySelector('dialog[open]')&&el('bottomControls').getBoundingClientRect().top<window.innerHeight+900)loadPage();},450);
+function cancelAutoTimer(){
+ if(autoTimer!==null){clearTimeout(autoTimer);autoTimer=null;}
 }
+function canPrefetch(){
+ return !busy&&hasMore&&!autoPaused&&!!searchState&&!document.hidden&&!document.querySelector('dialog[open]');
+}
+function nearEnd(){
+ return el('bottomControls').getBoundingClientRect().top<=window.innerHeight+Math.max(1600,window.innerHeight*3);
+}
+function scheduleAuto(){
+ if(autoTimer!==null||!canPrefetch()||!nearEnd())return;
+ const delay=feedErrors?Math.min(8000,1000*2**feedErrors):emptyBatches?Math.min(3000,250*2**Math.min(emptyBatches,4)):100;
+ autoTimer=setTimeout(()=>{
+  autoTimer=null;
+  if(canPrefetch()&&nearEnd())loadPage();
+ },delay);
+}
+const feedWatcher=typeof IntersectionObserver==='function'?new IntersectionObserver(entries=>{
+ if(entries.some(e=>e.isIntersecting))scheduleAuto();
+},{rootMargin:'0px 0px 2500px 0px'}):null;
+if(feedWatcher)feedWatcher.observe(el('bottomControls'));
 window.addEventListener('scroll',scheduleAuto,{passive:true});
 window.addEventListener('resize',scheduleAuto,{passive:true});
 document.addEventListener('visibilitychange',scheduleAuto);
 for(const dialog of document.querySelectorAll('dialog'))dialog.addEventListener('close',scheduleAuto);
-el('autoScroll').onchange=()=>{refresh();scheduleAuto();};
-el('pauseAuto').onclick=()=>{autoPaused=!autoPaused;if(!autoPaused){emptyBatches=0;stopped=false;}refresh();scheduleAuto();};
-el('more').onclick=()=>{emptyBatches=0;stopped=false;loadPage();};
+el('resumeSearch').onclick=()=>{
+ if(busy||!hasMore)return;
+ autoPaused=false;stopped=false;emptyBatches=0;feedErrors=0;
+ refresh();scheduleAuto();
+};
 
 el('all').onclick=()=>{if(selected.size===cards.size)selected.clear();else for(const id of cards.keys())selected.add(id);refresh();};
 el('batch').onclick=()=>downloads([...selected]);
