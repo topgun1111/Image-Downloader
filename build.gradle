@@ -13,11 +13,7 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
-    packaging {
-        resources.excludes += ['META-INF/versions/**', 'META-INF/DEPENDENCIES']
-        // Compress native libraries to remain compatible with installed 128 MiB updaters.
-        jniLibs.useLegacyPackaging = true
-    }
+    packaging { resources.excludes += ['META-INF/versions/**', 'META-INF/DEPENDENCIES'] }
 }
 dependencies {
     testImplementation 'junit:junit:4.13.2'

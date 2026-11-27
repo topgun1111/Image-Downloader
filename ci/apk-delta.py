@@ -7,7 +7,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-MAX = 128 * 1024 * 1024
+MAX = 512 * 1024 * 1024
 
 
 def entry_ranges(path, data):

@@ -6,7 +6,7 @@ import java.util.Locale;
 
 /** IDP1: byte-exact copy/literal operations, independent of APK ZIP alignment. */
 final class ApkDelta {
-    static final int MAX=128*1024*1024;
+    static final int MAX=512*1024*1024;
     static String sha256(File file)throws Exception{
         MessageDigest md=MessageDigest.getInstance("SHA-256");
         try(InputStream in=new BufferedInputStream(new FileInputStream(file))){

@@ -40,7 +40,7 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "COUNT=$count" >> "$GITHUB_ENV"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          gradle testReleaseUnitTest assembleRelease -PcommitCount="$count" -PappVersion="$version"
+          gradle --stacktrace testReleaseUnitTest assembleRelease -PcommitCount="$count" -PappVersion="$version"
       - name: Sign and verify installable release
         env:
           ANDROID_RELEASE_KEY_PEM: ${{ secrets.ANDROID_RELEASE_KEY_PEM }}
@@ -83,9 +83,12 @@ jobs:
           javac -d "$RUNNER_TEMP/delta-java" src/main/java/app/imagedownloader/ApkDelta.java
           size=$(stat -c%s Image-Downloader.apk)
           echo "Signed APK size: $size bytes"
-          if (( size <= 0 || size > 128 * 1024 * 1024 )); then
-            echo "::error::Signed APK exceeds the 128 MiB limit in existing installed updaters. Refusing to publish an unreachable update."
+          if (( size <= 0 || size > 512 * 1024 * 1024 )); then
+            echo "::error::Signed APK exceeds the current updater size limit (512 MiB)."
             exit 1
+          fi
+          if (( size > 128 * 1024 * 1024 )); then
+            echo "::warning::Older 128 MiB updaters require a one-time manual APK installation over the existing app."
           fi
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -r --arg current "v$VERSION" '[.[][] | select(.draft==false and .prerelease==false and .tag_name!=$current and (.tag_name|test("^v[0-9]+[.][0-9]+[.][0-9]+-[0-9a-f]{8,40}$")) and any(.assets[]?; .name=="Image-Downloader.apk" and .state=="uploaded"))] | sort_by(.tag_name|split("-")[0]|split(".")[-1]|tonumber) | reverse | .[:10][] | .tag_name' > "$RUNNER_TEMP/delta-tags"
           while IFS= read -r tag; do
@@ -121,7 +124,11 @@ jobs:
           if ! gh release view "$tag" >/dev/null 2>&1; then
             shopt -s nullglob
             patches=("$RUNNER_TEMP/deltas/"*.idpatch)
-            gh release create "$tag" Image-Downloader.apk "${patches[@]}" --target "$GITHUB_SHA" --title "Image Downloader $VERSION" --notes "Commit $GITHUB_SHA · Wi-Fi full APK / mobile delta updates" --latest
+            notes="Commit $GITHUB_SHA · Wi-Fi full APK / mobile delta updates"
+            if (( $(stat -c%s Image-Downloader.apk) > 128 * 1024 * 1024 )); then
+              notes="$notes. If your older in-app updater rejects this APK size, download this signed APK and install over the existing app once; do not uninstall."
+            fi
+            gh release create "$tag" Image-Downloader.apk "${patches[@]}" --target "$GITHUB_SHA" --title "Image Downloader $VERSION" --notes "$notes" --latest
           fi
           info=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag")
           asset=$(jq -er '.assets[] | select(.name=="Image-Downloader.apk") | .id' <<< "$info")

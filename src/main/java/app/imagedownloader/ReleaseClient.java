@@ -16,7 +16,7 @@ import java.util.regex.*;
 final class ReleaseClient {
     private static final String API="https://api.github.com/repos/topgun1111/Image-Downloader/releases";
     private static final Pattern TAG=Pattern.compile("v[0-9]+\\.[0-9]+\\.([0-9]+)-[0-9a-f]{8,40}");
-    private static final int MAX_APK=128*1024*1024;
+    private static final int MAX_APK=ApkDelta.MAX;
     static final String DOWNLOAD="https://github.com/topgun1111/Image-Downloader/releases/download/";
     ReleaseClient(){}
 

@@ -31,4 +31,18 @@ public class ApkDeltaTest {
     @Test public void rejectsTrailingBytes()throws Exception{run(patch(1,true),new byte[4],false);}
     @Test public void rejectsTruncation()throws Exception{run(java.util.Arrays.copyOf(patch(1,false),10),new byte[4],false);}
     @Test public void rejectsWrongTargetLength()throws Exception{run(patch(1,false),new byte[5],false);}
+    @Test public void acceptsLargeBaseAndRejectsExcessiveSize()throws Exception{
+        File dir=Files.createTempDirectory("delta-large-test").toFile();
+        File base=new File(dir,"old"),p=new File(dir,"patch"),target=new File(dir,"new");
+        try{
+            try(RandomAccessFile f=new RandomAccessFile(base,"rw")){
+                f.write(new byte[]{10,20,30,40});f.setLength(129L*1024*1024);
+            }
+            Files.write(p.toPath(),patch(1,false));
+            ApkDelta.apply(base,p,target,4);
+            assertArrayEquals(new byte[]{20,30,1,2},Files.readAllBytes(target.toPath()));
+            try(RandomAccessFile f=new RandomAccessFile(base,"rw")){f.setLength((long)ApkDelta.MAX+1);}
+            try{ApkDelta.apply(base,p,target,4);fail("Oversized base accepted");}catch(IOException expected){}
+        }finally{target.delete();p.delete();base.delete();dir.delete();}
+    }
 }
