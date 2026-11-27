@@ -74,10 +74,16 @@ def main():
         raise ValueError("Base size out of range")
     sha = hashlib.sha256(args.base.read_bytes()).hexdigest()
     output = args.directory / ("delta-" + sha + ".idpatch")
-    if generate(args.base, args.target, output):
-        print(output)
-    else:
-        print("")
+    # Never leave a partially written patch for the release workflow to upload.
+    temporary = output.with_suffix(".tmp")
+    try:
+        if generate(args.base, args.target, temporary):
+            os.replace(temporary, output)
+            print(output)
+        else:
+            print("")
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

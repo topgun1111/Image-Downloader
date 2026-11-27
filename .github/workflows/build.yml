@@ -82,6 +82,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/deltas" "$RUNNER_TEMP/delta-base" "$RUNNER_TEMP/delta-java"
           javac -d "$RUNNER_TEMP/delta-java" src/main/java/app/imagedownloader/ApkDelta.java
           size=$(stat -c%s Image-Downloader.apk)
+          echo "Signed APK size: $size bytes"
+          if (( size <= 0 || size > 128 * 1024 * 1024 )); then
+            echo "::error::Signed APK exceeds the 128 MiB limit in existing installed updaters. Refusing to publish an unreachable update."
+            exit 1
+          fi
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -r --arg current "v$VERSION" '[.[][] | select(.draft==false and .prerelease==false and .tag_name!=$current and (.tag_name|test("^v[0-9]+[.][0-9]+[.][0-9]+-[0-9a-f]{8,40}$")) and any(.assets[]?; .name=="Image-Downloader.apk" and .state=="uploaded"))] | sort_by(.tag_name|split("-")[0]|split(".")[-1]|tonumber) | reverse | .[:10][] | .tag_name' > "$RUNNER_TEMP/delta-tags"
           while IFS= read -r tag; do
             base="$RUNNER_TEMP/delta-base/Image-Downloader.apk"
@@ -92,11 +97,16 @@ jobs:
             if ! "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$base"; then
               echo "::warning::Invalid base $tag"; continue
             fi
-            patch=$(python3 ci/apk-delta.py "$base" Image-Downloader.apk "$RUNNER_TEMP/deltas")
+            if ! patch=$(python3 ci/apk-delta.py "$base" Image-Downloader.apk "$RUNNER_TEMP/deltas"); then
+              echo "::warning::Cannot generate delta for $tag; full APK remains available."
+              continue
+            fi
             if [[ -n "$patch" ]]; then
-              java -cp "$RUNNER_TEMP/delta-java" app.imagedownloader.ApkDelta "$base" "$patch" "$RUNNER_TEMP/reconstructed.apk" "$size"
-              cmp Image-Downloader.apk "$RUNNER_TEMP/reconstructed.apk"
-              "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$RUNNER_TEMP/reconstructed.apk"
+              if ! java -cp "$RUNNER_TEMP/delta-java" app.imagedownloader.ApkDelta "$base" "$patch" "$RUNNER_TEMP/reconstructed.apk" "$size" || ! cmp Image-Downloader.apk "$RUNNER_TEMP/reconstructed.apk" || ! "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$RUNNER_TEMP/reconstructed.apk"; then
+                echo "::warning::Delta verification failed for $tag; discarding patch."
+                rm -f "$patch" "$RUNNER_TEMP/reconstructed.apk"
+                continue
+              fi
               echo "$tag: $(stat -c%s "$patch") / $size bytes"
               rm -f "$RUNNER_TEMP/reconstructed.apk"
             else
