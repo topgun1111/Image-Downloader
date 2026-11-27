@@ -22,6 +22,14 @@ public final class MainActivity extends Activity {
     private VisualAI visual;
     private final Set<Long> visualHashes=new LinkedHashSet<>();
     private int lastSearchSession=-1;
+    private volatile PreparedShare preparedShare;
+    private static final class PreparedShare {
+        final String token,folder,prompt;
+        final ArrayList<Uri> uris;
+        PreparedShare(String token,String folder,String prompt,ArrayList<Uri> uris){
+            this.token=token;this.folder=folder;this.prompt=prompt;this.uris=new ArrayList<>(uris);
+        }
+    }
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -33,7 +41,7 @@ public final class MainActivity extends Activity {
             return insets;
         });
         WebSettings settings=view.getSettings();
-        settings.setJavaScriptEnabled(true); settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);
+        settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(true); settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);
         settings.setUserAgentString(settings.getUserAgentString()+" "+Search.WIKI_UA);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
         view.setWebViewClient(new WebViewClient(){
@@ -61,11 +69,26 @@ public final class MainActivity extends Activity {
         @JavascriptInterface public void cancelSearch(int id){
             SearchCancellation token=searches.get(id);if(token!=null)token.cancel();
         }
+        @JavascriptInterface public void sharePrepared(String token,boolean launch){
+            runOnUiThread(()->{
+                if(isDestroyed()||!PAGE.equals(view.getUrl()))return;
+                PreparedShare batch=preparedShare;
+                if(batch==null||!batch.token.equals(token))return;
+                if(!batch.prompt.isEmpty()){
+                    try{
+                        android.content.ClipboardManager clipboard=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+                        if(clipboard!=null)clipboard.setPrimaryClip(ClipData.newPlainText("ChatGPT",batch.prompt));
+                    }catch(RuntimeException ignored){}
+                }
+                if(launch)openShare(batch);
+                else android.widget.Toast.makeText(MainActivity.this,"Görseller hazır: "+batch.folder,android.widget.Toast.LENGTH_LONG).show();
+            });
+        }
         @JavascriptInterface public void request(int id,String action,String data){
             if(worker.isShutdown()) return;
             final SearchCancellation token=action.equals("search")?new SearchCancellation():null;
             if(token!=null)searches.put(id,token);
-            try{(action.equals("save")?downloads:worker).execute(()->{
+            try{((action.equals("save")||action.equals("prepareShare"))?downloads:worker).execute(()->{
                 JSONObject answer;
                 try {
                     if(token!=null)token.enter();
@@ -114,6 +137,8 @@ public final class MainActivity extends Activity {
                         }
                         SearchCancellation.check();
                         register(answer.getJSONArray("rows"),req);
+                    } else if(action.equals("prepareShare")){
+                        answer=prepareShare(id,new ShareSelection(req));
                     } else if(action.equals("save")){
                         String[] item=known.get(req.getString("id"));
                         if(item==null) throw new IOException("Aramayı yenileyin.");
@@ -158,7 +183,66 @@ public final class MainActivity extends Activity {
             known.put(url,new String[]{url,req.getString("q"),row.optString("fallback"),String.valueOf(req.optBoolean("clean",true)),row.optString("tracking"),req.optJSONObject("keys")==null?"":req.optJSONObject("keys").optString("unsplash")});row.put("id",url);
         }
     }
-    private void save(String url,String query,boolean clean) throws Exception {
+    private JSONObject prepareShare(int requestId,ShareSelection selection)throws Exception{
+        String token=UUID.randomUUID().toString();
+        String folder="Download/Google/ChatGPT/"+new java.text.SimpleDateFormat("yyyyMMdd-HHmmss",Locale.ROOT).format(new Date())+"-"+token.substring(0,8);
+        ArrayList<Uri> uris=new ArrayList<>();
+        JSONArray errors=new JSONArray();
+        int alternate=0,index=0;
+        List<String[]> items=new ArrayList<>();
+        for(String id:selection.ids)items.add(known.get(id));
+        for(String[] item:items){
+            if(Thread.currentThread().isInterrupted())throw new InterruptedIOException("Paylaşım durduruldu.");
+            progress(requestId,new JSONObject().put("message","Görseller hazırlanıyor · "+(++index)+" / "+items.size()));
+            try{
+                if(item==null)throw new IOException("Görsel artık mevcut değil.");
+                if(!item[4].isEmpty())MultiSearch.trackUnsplash(item[4],item[5]);
+                boolean clean=Boolean.parseBoolean(item[3]);
+                Uri uri;
+                String name=String.format(Locale.ROOT,"%02d_%s",index,item[1]);
+                try{uri=save(item[0],name,clean,folder);}
+                catch(Exception ex){
+                    if(item[2].isEmpty()||Thread.currentThread().isInterrupted())throw ex;
+                    uri=save(item[2],name,clean,folder);alternate++;
+                }
+                uris.add(uri);
+            }catch(Exception ex){
+                if(Thread.currentThread().isInterrupted())throw ex;
+                errors.put(index+". görsel: "+Search.safeError(ex));
+            }
+        }
+        if(uris.isEmpty())throw new IOException("Hiçbir görsel hazırlanamadı. "+(errors.length()>0?errors.optString(0):""));
+        preparedShare=new PreparedShare(token,folder,selection.prompt,uris);
+        return new JSONObject().put("token",token).put("folder",folder).put("count",uris.size())
+            .put("requested",items.size()).put("alternate",alternate).put("errors",errors);
+    }
+    private void openShare(PreparedShare batch){
+        Intent intent=new Intent(batch.uris.size()==1?Intent.ACTION_SEND:Intent.ACTION_SEND_MULTIPLE);
+        String mime=getContentResolver().getType(batch.uris.get(0));
+        for(Uri uri:batch.uris)if(!Objects.equals(mime,getContentResolver().getType(uri))){mime="image/*";break;}
+        intent.setType(mime==null?"image/*":mime);
+        if(batch.uris.size()==1)intent.putExtra(Intent.EXTRA_STREAM,batch.uris.get(0));
+        else intent.putParcelableArrayListExtra(Intent.EXTRA_STREAM,new ArrayList<>(batch.uris));
+        ClipData clips=ClipData.newUri(getContentResolver(),"ChatGPT images",batch.uris.get(0));
+        for(int i=1;i<batch.uris.size();i++)clips.addItem(new ClipData.Item(batch.uris.get(i)));
+        intent.setClipData(clips);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        if(!batch.prompt.isEmpty())intent.putExtra(Intent.EXTRA_TEXT,batch.prompt);
+        try{
+            startActivity(new Intent(intent).setPackage("com.openai.chatgpt"));
+        }catch(RuntimeException unavailable){
+            try{startActivity(Intent.createChooser(intent,"ChatGPT ile paylaş"));}
+            catch(RuntimeException noTarget){
+                new android.app.AlertDialog.Builder(this).setTitle("Paylaşım açılamadı")
+                    .setMessage("ChatGPT'de dosya ekle bölümünden bu klasörü seçin:\n"+batch.folder)
+                    .setPositiveButton("Tamam",null).show();
+            }
+        }
+    }
+    private Uri save(String url,String query,boolean clean) throws Exception {
+        return save(url,query,clean,"Download/Google");
+    }
+    private Uri save(String url,String query,boolean clean,String folder) throws Exception {
         HttpURLConnection c=Search.open(url);
         Uri dest=null;boolean complete=false;
         try(BufferedInputStream in=new BufferedInputStream(c.getInputStream())){
@@ -171,7 +255,7 @@ public final class MainActivity extends Activity {
             ContentValues values=new ContentValues();
             values.put(MediaStore.MediaColumns.DISPLAY_NAME,stem+"_"+UUID.randomUUID().toString().substring(0,8)+"."+format);
             values.put(MediaStore.MediaColumns.MIME_TYPE,"image/"+(format.equals("jpg")?"jpeg":format));
-            values.put(MediaStore.MediaColumns.RELATIVE_PATH,"Download/Google");
+            values.put(MediaStore.MediaColumns.RELATIVE_PATH,folder);
             values.put(MediaStore.MediaColumns.IS_PENDING,1);
             ContentResolver resolver=getContentResolver();
             dest=resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,values);
@@ -199,6 +283,7 @@ public final class MainActivity extends Activity {
             values.clear();values.put(MediaStore.MediaColumns.IS_PENDING,0);
             if(resolver.update(dest,values,null,null)!=1)throw new IOException("Kayıt tamamlanamadı.");
             complete=true;
+            return dest;
         } finally {
             c.disconnect();if(!complete && dest!=null)getContentResolver().delete(dest,null,null);
         }
@@ -215,7 +300,7 @@ public final class MainActivity extends Activity {
         throw new IOException("Kaynak desteklenen bir görsel göndermedi.");
     }
     @Override public void onBackPressed(){
-        view.evaluateJavascript("(function(){const d=document.querySelector('dialog[open]');if(d){d.close();return true}return false})()",v->{if(!"true".equals(v))finish();});
+        view.evaluateJavascript("(function(){const d=document.querySelector('dialog[open]');if(d){if(d.id==='shareDialog'&&sharing)return true;d.close();return true}return false})()",v->{if(!"true".equals(v))finish();});
     }
     @Override protected void onDestroy(){
         for(SearchCancellation token:searches.values())token.cancel();

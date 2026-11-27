@@ -20,7 +20,13 @@ dialog{max-width:min(94vw,850px);border:0;border-radius:14px;padding:12px}dialog
 #stopSearch{position:fixed;left:14px;bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:21;min-height:48px;padding:12px 16px;border:1px solid #ffffff80;border-radius:28px;background:#a92e35;color:white;box-shadow:0 3px 12px #18273e40}
 #stopSearch:focus-visible{outline:3px solid #e6a1a5;outline-offset:2px}
 #jumpTop:focus-visible{outline:3px solid #78a9e0;outline-offset:2px}
-main{padding-bottom:92px}
+main{padding-bottom:150px}
+#shareFloating{position:fixed;right:14px;bottom:calc(76px + env(safe-area-inset-bottom,0px));z-index:22;max-width:calc(100vw - 28px);border-radius:26px;background:#13765e;box-shadow:0 3px 12px #18273e40}
+#shareSelected,#prepareShare{background:#13765e}
+#shareDialog{width:min(94vw,520px);max-height:88vh;overflow:auto}
+#shareDialog textarea,#shareDialog select{width:100%;font:inherit;padding:10px;border:1px solid #aab6c8;border-radius:8px}
+#shareResult{white-space:pre-wrap;overflow-wrap:anywhere}
+#shareProgress{overflow-wrap:anywhere}
 </style><main><header><h1>Image Downloader</h1><button type="button" onclick="Gallery.showSettings()">Ayarlar</button></header>
 <div class="tools"><button id="filterButton" type="button">Filtre · Tümü</button><button id="sortButton" type="button">Sırala · Önerilen</button></div><label for="engine" hidden>Arama motoru</label>
 <form id="form"><input id="query" type="search" placeholder="Tüm kaynaklarda görsel ara" aria-label="Arama" maxlength="256" required><button id="go">Ara</button></form>
@@ -45,9 +51,17 @@ main{padding-bottom:92px}
 <select id="sort" style="width:100%;font:inherit;padding:12px"><option value="rank">En ilgili sonuçlar</option><option value="rare">Keşfedilen özgün kaynaklar önce</option><option value="large">En yüksek çözünürlük</option><option value="small">En düşük çözünürlük</option><option value="name">Başlık A–Z</option><option value="source">Kaynağa göre</option></select>
 <p>Boyutu bilinmeyen görseller sona alınır.</p></dialog>
 <details id="sourceDetails" hidden><summary>Kaynak durumları</summary><p id="sourceStatus"></p></details>
-<div class="tools" id="tools" hidden><button id="all">Tümünü seç</button><button id="batch">Seçilenleri indir</button></div>
+<div class="tools" id="tools" hidden><button id="all">Tümünü seç</button><button id="batch">Seçilenleri indir</button><button id="shareSelected" type="button">ChatGPT’ye gönder</button></div>
 <p id="message" role="status"></p><p id="errors" role="alert"></p><section id="grid"></section><div id="bottomControls" aria-live="polite"><span id="feedSpinner" hidden aria-hidden="true"></span><p id="scrollStatus" role="status"></p><button id="resumeSearch" hidden type="button">Aramayı sürdür</button></div>
-<dialog id="preview"><header><strong>Önizleme</strong><button id="closePreview">Kapat</button></header><img id="large" alt="Görsel önizlemesi"><p id="caption"></p><button id="savePreview">İndir</button></dialog><button id="stopSearch" type="button" hidden aria-label="Aramayı durdur">■ Durdur</button><button id="jumpTop" type="button" hidden aria-label="Arama alanına dön"><span aria-hidden="true">↑</span> Başa dön</button></main>
+<dialog id="shareDialog"><header><strong>ChatGPT’ye görsel gönder</strong><button id="closeShare" type="button">Kapat</button></header>
+<p id="shareCount"></p><label for="sharePreset">Boyama sayfası türü</label>
+<select id="sharePreset"><option value="detailed">Ultra detaylı boyama sayfaları</option><option value="simple">Çocuklar için basit boyama sayfaları</option><option value="original">Orijinal görseller · talimatsız</option><option value="custom">Özel talimat</option></select>
+<label for="sharePrompt">ChatGPT talimatı (düzenlenebilir)</label><textarea id="sharePrompt" rows="7" maxlength="8000"></textarea>
+<p style="font-size:13px">Orijinal çözünürlük önceliklidir. Görseller ayrıca Download/Google/ChatGPT altına kaydedilir. Talimat panoya kopyalanır; ChatGPT'de gerekirse yapıştırıp gönderin.</p>
+<div class="tools"><button id="prepareShare" type="button">Hazırla ve ChatGPT’yi aç</button><button id="manualShare" type="button">Yalnızca hazırla ve kaydet</button></div>
+<p id="shareProgress" role="status"></p><p id="shareResult" role="status"></p>
+<div id="shareRetry" class="tools" hidden><button id="retryShare" type="button">Hazırlananları yeniden paylaş</button><button id="copySharePrompt" type="button">Talimatı tekrar kopyala</button></div>
+</dialog><button id="shareFloating" type="button" hidden>ChatGPT’ye gönder</button><dialog id="preview"><header><strong>Önizleme</strong><button id="closePreview">Kapat</button></header><img id="large" alt="Görsel önizlemesi"><p id="caption"></p><button id="savePreview">İndir</button></dialog><button id="stopSearch" type="button" hidden aria-label="Aramayı durdur">■ Durdur</button><button id="jumpTop" type="button" hidden aria-label="Arama alanına dön"><span aria-hidden="true">↑</span> Başa dön</button></main>
 <style>[hidden]{display:none!important}</style><script>
 const el=id=>document.getElementById(id);
 const jumpTop=el('jumpTop');
@@ -58,6 +72,7 @@ jumpTop.onclick=()=>{window.scrollTo(0,0);updateJumpTop();};
 updateJumpTop();
 const selected=new Set(), cards=new Map();
 let current=null,busy=false,downloading=false,searching=false,activeSearchId=null,stopRequested=false,stopped=false,searchSession=0;
+let sharing=false,shareIds=[],preparedToken=null;
 let sequence=0, searchState=null, nextPage=0, hasMore=false, order=0, autoPaused=false, emptyBatches=0, autoTimer=null, feedErrors=0;
 const providers={bing:'Bing',google:'Google',yandex:'Yandex',pinterest:'Pinterest',openverse:'Openverse',flickr:'Flickr',pexels:'Pexels',pixabay:'Pixabay',unsplash:'Unsplash',deviantart:'DeviantArt',artstation:'ArtStation',freepik:'Freepik',stocksnap:'StockSnap',rawpixel:'Rawpixel',duckduckgo:'DuckDuckGo',deepweb:'Derin web',officialmedia:'Resmi medya',fangalleries:'Hayran galerileri'};
 for(const [id,name] of Object.entries(providers)){
@@ -126,6 +141,11 @@ function refresh(){
  el('scrollStatus').textContent=stopRequested&&searching?'Arama durduruluyor…':searching?'Yeni görseller yükleniyor…':stopped?'Arama durduruldu. Mevcut sonuçlar korunuyor.':autoPaused&&hasMore?'Arama geçici olarak duraklatıldı.':hasMore?'Kaydırdıkça yeni görseller yüklenir.':searchState&&!busy?'Başka sonuç bulunamadı.':'';
  el('installModel').disabled=busy;el('filterButton').disabled=busy;el('pinterest').disabled=busy;el('tools').hidden=!cards.size;el('go').disabled=busy||downloading;
  el('batch').disabled=downloading||!selected.size;el('all').disabled=downloading;
+ el('shareSelected').disabled=downloading||!selected.size;
+ el('shareSelected').textContent='ChatGPT’ye gönder ('+selected.size+')';
+ el('shareFloating').hidden=!selected.size&&!sharing;
+ el('shareFloating').disabled=downloading;
+ el('shareFloating').textContent=sharing?'Görseller hazırlanıyor…':'ChatGPT’ye gönder ('+selected.size+')';
  el('all').textContent=selected.size===cards.size?'Seçimi kaldır':'Tümünü seç';
  el('batch').textContent='Seçilenleri indir ('+selected.size+')';
  for(const [id,c] of cards){c.check.checked=selected.has(id);c.check.disabled=downloading;c.save.disabled=downloading;}
@@ -170,6 +190,61 @@ function card(item){
  check.onchange=()=>{if(check.checked)selected.add(item.id);else selected.delete(item.id);refresh();};
  save.onclick=()=>downloads([item.id]);cards.set(item.id,{item,check,save,node:a,relevance,info,img,order:order++});el('grid').append(a);if(imageWatcher)imageWatcher.observe(img);else state.resume();
 }
+const sharePresets={
+ detailed:'Convert each attached image into a separate, ultra-detailed, high-resolution black-and-white coloring page. Preserve the original characters, facial expressions, clothing, proportions, composition and background details. Use clean, sharp black outlines and white unfilled spaces, with no grayscale shading, colored areas or large solid-black fills. Make every page suitable for A4 printing. Show each completed page and package all completed coloring pages into a ZIP file if possible.',
+ simple:'Convert each attached image into a separate black-and-white coloring page suitable for elementary school children. Keep the original characters recognizable. Use bold, clean outlines, large easy-to-color areas, simplified backgrounds and no grayscale or colored shading. Make each page suitable for A4 printing and package the finished pages into a ZIP file if possible.',
+ original:'',custom:''
+};
+function sharePrefs(){
+ try{const saved=JSON.parse(localStorage.getItem('sharePreferences')||'null');if(saved&&Object.prototype.hasOwnProperty.call(sharePresets,saved.preset)&&typeof saved.prompt==='string'){el('sharePreset').value=saved.preset;el('sharePrompt').value=saved.prompt.slice(0,8000);return;}}catch(e){}
+ el('sharePreset').value='detailed';el('sharePrompt').value=sharePresets.detailed;
+}
+function rememberSharePrefs(){
+ try{localStorage.setItem('sharePreferences',JSON.stringify({preset:el('sharePreset').value,prompt:el('sharePrompt').value}));}catch(e){}
+}
+function changeSharePreset(){
+ const preset=el('sharePreset').value;
+ if(preset!=='custom')el('sharePrompt').value=sharePresets[preset];
+ rememberSharePrefs();
+}
+el('sharePreset').onchange=changeSharePreset;
+el('sharePrompt').oninput=()=>{if(el('sharePreset').value==='original'&&el('sharePrompt').value.trim())el('sharePreset').value='custom';rememberSharePrefs();};
+sharePrefs();
+function openShareDialog(){
+ if(downloading||!selected.size)return;
+ shareIds=[...selected].filter(id=>cards.has(id));preparedToken=null;
+ el('shareCount').textContent=shareIds.length+' görsel seçildi · en fazla 20 görsel / paylaşım';
+ el('shareProgress').textContent='';el('shareResult').textContent=shareIds.length>20?'Lütfen en fazla 20 görsel seçin. Seçimleriniz değiştirilmedi.':'';
+ el('shareRetry').hidden=true;
+ el('prepareShare').disabled=el('manualShare').disabled=!shareIds.length||shareIds.length>20;
+ el('shareDialog').showModal();
+}
+el('shareSelected').onclick=el('shareFloating').onclick=openShareDialog;
+el('closeShare').onclick=()=>{if(!sharing)el('shareDialog').close();};
+el('shareDialog').addEventListener('cancel',e=>{if(sharing)e.preventDefault();});
+async function prepareSelectedShare(launch){
+ if(sharing||downloading||!shareIds.length||shareIds.length>20)return;
+ sharing=true;downloading=true;preparedToken=null;refresh();cancelAutoTimer();
+ for(const id of ['prepareShare','manualShare','closeShare','sharePreset','sharePrompt'])el(id).disabled=true;
+ el('shareRetry').hidden=true;el('shareResult').textContent='';el('shareProgress').textContent='Görseller hazırlanıyor…';
+ const prompt=el('sharePrompt').value.trim();rememberSharePrefs();
+ try{
+  const result=await api('prepareShare',{ids:shareIds,prompt},p=>{if(p.message)el('shareProgress').textContent=p.message;});
+  preparedToken=result.token;
+  el('shareProgress').textContent=result.count+' / '+result.requested+' görsel hazır.';
+  el('shareResult').textContent='Klasör: '+result.folder+(result.alternate?'\nAlternatif dosya kullanılan görseller: '+result.alternate:'')+(result.errors.length?'\nAlınamayanlar:\n'+result.errors.join('\n'):'')+(prompt?'\nTalimatı ChatGPT’de gerekirse yapıştırın.':'');
+  el('shareRetry').hidden=false;el('copySharePrompt').hidden=!prompt;
+  Gallery.sharePrepared(preparedToken,launch&&result.count===result.requested);
+ }catch(e){el('shareProgress').textContent='Hazırlanamadı: '+e.message;}
+ finally{
+  sharing=false;downloading=false;for(const id of ['prepareShare','manualShare','closeShare','sharePreset','sharePrompt'])el(id).disabled=false;
+  refresh();scheduleAuto();
+ }
+}
+el('prepareShare').onclick=()=>prepareSelectedShare(true);
+el('manualShare').onclick=()=>prepareSelectedShare(false);
+el('retryShare').onclick=()=>{if(preparedToken)Gallery.sharePrepared(preparedToken,true);};
+el('copySharePrompt').onclick=()=>{if(preparedToken)Gallery.sharePrepared(preparedToken,false);};
 async function downloads(ids){
  if(downloading)return;const entries=ids.map(id=>[id,cards.get(id)]).filter(([,entry])=>entry);if(!entries.length)return;downloading=true;refresh();el('errors').textContent='';let saved=0;
  for(const [i,[id,entry]] of entries.entries()){
