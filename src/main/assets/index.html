@@ -12,6 +12,9 @@ article{min-width:0;background:white;border:1px solid #dbe2eb;border-radius:14px
 article p{margin:9px;font-size:13px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 footer{justify-content:space-between;padding:0 8px 8px}label{display:flex;align-items:center;min-height:44px;font-size:14px}input[type=checkbox]{width:19px;height:19px;accent-color:#214f85}
 dialog{max-width:min(94vw,850px);border:0;border-radius:14px;padding:12px}dialog::backdrop{background:#101824cc}dialog img{display:block;max-width:100%;width:auto;max-height:68vh;margin:auto;object-fit:contain}header{justify-content:space-between;margin-bottom:8px}#message,#errors{overflow-wrap:anywhere}#errors{white-space:pre-line;color:#823926}
+#jumpTop{position:fixed;right:14px;bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:20;display:flex;align-items:center;gap:6px;min-height:48px;padding:12px 16px;border:1px solid #ffffff80;border-radius:28px;background:#214f85;color:white;box-shadow:0 3px 12px #18273e40}
+#jumpTop:focus-visible{outline:3px solid #78a9e0;outline-offset:2px}
+main{padding-bottom:92px}
 </style><main><header><h1>Image Downloader</h1><button type="button" onclick="Gallery.showSettings()">Ayarlar</button></header>
 <div class="tools"><button id="filterButton" type="button">Filtre · Tümü</button><button id="sortButton" type="button">Sırala · Önerilen</button></div><label for="engine" hidden>Arama motoru</label>
 <form id="form"><input id="query" type="search" placeholder="Tüm kaynaklarda görsel ara" aria-label="Arama" maxlength="256" required><button id="go">Ara</button></form>
@@ -37,9 +40,15 @@ dialog{max-width:min(94vw,850px);border:0;border-radius:14px;padding:12px}dialog
 <details id="sourceDetails" hidden><summary>Kaynak durumları</summary><p id="sourceStatus"></p></details>
 <div class="tools" id="tools" hidden><button id="all">Tümünü seç</button><button id="batch">Seçilenleri indir</button></div>
 <p id="message" role="status"></p><p id="errors" role="alert"></p><section id="grid"></section><button id="more" hidden>Daha fazla göster</button>
-<dialog id="preview"><header><strong>Önizleme</strong><button id="closePreview">Kapat</button></header><img id="large" alt="Görsel önizlemesi"><p id="caption"></p><button id="savePreview">İndir</button></dialog></main>
+<dialog id="preview"><header><strong>Önizleme</strong><button id="closePreview">Kapat</button></header><img id="large" alt="Görsel önizlemesi"><p id="caption"></p><button id="savePreview">İndir</button></dialog><button id="jumpTop" type="button" hidden aria-label="Arama alanına dön"><span aria-hidden="true">↑</span> Başa dön</button></main>
 <style>[hidden]{display:none!important}</style><script>
 const el=id=>document.getElementById(id);
+const jumpTop=el('jumpTop');
+function updateJumpTop(){jumpTop.hidden=window.scrollY<=Math.max(300,window.innerHeight*.65);}
+window.addEventListener('scroll',updateJumpTop,{passive:true});
+window.addEventListener('resize',updateJumpTop,{passive:true});
+jumpTop.onclick=()=>{window.scrollTo(0,0);updateJumpTop();};
+updateJumpTop();
 const selected=new Set(), cards=new Map();
 let current=null,busy=false;
 let sequence=0, searchState=null, nextPage=0, hasMore=false, order=0;
