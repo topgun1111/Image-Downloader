@@ -13,14 +13,21 @@ article p{margin:9px;font-size:13px;overflow:hidden;white-space:nowrap;text-over
 footer{justify-content:space-between;padding:0 8px 8px}label{display:flex;align-items:center;min-height:44px;font-size:14px}input[type=checkbox]{width:19px;height:19px;accent-color:#214f85}
 dialog{max-width:min(94vw,850px);border:0;border-radius:14px;padding:12px}dialog::backdrop{background:#101824cc}dialog img{display:block;max-width:100%;width:auto;max-height:68vh;margin:auto;object-fit:contain}header{justify-content:space-between;margin-bottom:8px}#message,#errors{overflow-wrap:anywhere}#errors{white-space:pre-line;color:#823926}
 </style><main><header><h1>Image Downloader</h1><button type="button" onclick="Gallery.showSettings()">Ayarlar</button></header>
-<label for="engine">Arama motoru</label>
-<select id="engine" style="width:100%;font:inherit;padding:10px;border-radius:10px;margin-bottom:12px">
-<option value="bing">Bing Görseller</option><option value="yandex">Yandex Görsel</option><option value="google">Google Görseller</option></select>
-<label><input type="checkbox" id="pinterest">Pinterest üzerinde ara</label>
-<form id="form"><input id="query" type="search" placeholder="Görsel ara" aria-label="Arama" maxlength="256" required><button id="go">Ara</button></form>
-<label id="fallbackLabel"><input id="fallback" type="checkbox" checked>Seçilen motor sonuç vermezse Wikimedia Commons’ta ara</label>
-<a id="openEngine"  rel="noopener noreferrer" hidden>Aramayı tarayıcıda aç</a>
-<details id="apiOptions" hidden><summary>Alternatif arama · SerpApi</summary><p>Google doğrudan sonuç vermezse kendi SerpApi anahtarını girip tekrar ara. Alan doluyken arama SerpApi üzerinden yapılır.</p><input id="apiKey" type="password" placeholder="SerpApi anahtarı" aria-label="SerpApi anahtarı" autocomplete="off"></details>
+<div class="tools"><button id="filterButton" type="button">Filtre · Tümü</button><button id="sortButton" type="button">Sırala · Önerilen</button></div><label for="engine" hidden>Arama motoru</label>
+<form id="form"><input id="query" type="search" placeholder="Tüm kaynaklarda görsel ara" aria-label="Arama" maxlength="256" required><button id="go">Ara</button></form>
+<dialog id="filters"><header><strong>Arama filtreleri</strong><button id="closeFilters" type="button">Tamam</button></header>
+<p>Aranacak kaynakları seçin.</p><div class="tools"><button id="selectSources" type="button">Tümünü seç</button><button id="clearSources" type="button">Temizle</button></div>
+<div id="providers" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 12px"></div>
+<label><input type="checkbox" id="clean" checked>Yer tutucuları, ikonları ve çok küçük görselleri ele</label>
+<label><input type="checkbox" id="pinterest">Yalnızca Pinterest (seçili arama motorları dahil)</label>
+<details><summary>İsteğe bağlı API anahtarları</summary><p>Anahtarlar sadece bu oturumda kullanılır, APK'ya gömülmez.</p>
+<label for="apiKey">SerpApi (Google)</label><input id="apiKey" type="password" autocomplete="off">
+<label for="pexelsKey">Pexels</label><input id="pexelsKey" type="password" autocomplete="off">
+<label for="pixabayKey">Pixabay</label><input id="pixabayKey" type="password" autocomplete="off"><label for="unsplashKey">Unsplash Access Key</label><input id="unsplashKey" type="password" autocomplete="off"></details></dialog>
+<dialog id="sortDialog"><header><strong>Sonuçları sırala</strong><button id="closeSort" type="button">Tamam</button></header>
+<select id="sort" style="width:100%;font:inherit;padding:12px"><option value="rank">Önerilen (kaynaklar karışık)</option><option value="large">En yüksek çözünürlük</option><option value="small">En düşük çözünürlük</option><option value="name">Başlık A–Z</option><option value="source">Kaynağa göre</option></select>
+<p>Boyutu bilinmeyen görseller sona alınır.</p></dialog>
+<details id="sourceDetails" hidden><summary>Kaynak durumları</summary><p id="sourceStatus"></p></details>
 <div class="tools" id="tools" hidden><button id="all">Tümünü seç</button><button id="batch">Seçilenleri indir</button></div>
 <p id="message" role="status"></p><p id="errors" role="alert"></p><section id="grid"></section><button id="more" hidden>Daha fazla göster</button>
 <dialog id="preview"><header><strong>Önizleme</strong><button id="closePreview">Kapat</button></header><img id="large" alt="Görsel önizlemesi"><p id="caption"></p><button id="savePreview">İndir</button></dialog></main>
@@ -28,7 +35,34 @@ dialog{max-width:min(94vw,850px);border:0;border-radius:14px;padding:12px}dialog
 const el=id=>document.getElementById(id);
 const selected=new Set(), cards=new Map();
 let current=null,busy=false;
-let sequence=0, searchState=null, nextPage=0, hasMore=false;
+let sequence=0, searchState=null, nextPage=0, hasMore=false, order=0;
+const providers={bing:'Bing',google:'Google',yandex:'Yandex',pinterest:'Pinterest',commons:'Wikimedia Commons',openverse:'Openverse',flickr:'Flickr',pexels:'Pexels',pixabay:'Pixabay',unsplash:'Unsplash',deviantart:'DeviantArt',artstation:'ArtStation',freepik:'Freepik',stocksnap:'StockSnap',rawpixel:'Rawpixel',wikimedia:'Wikipedia',duckduckgo:'DuckDuckGo'};
+for(const [id,name] of Object.entries(providers)){
+ const label=document.createElement('label'),check=document.createElement('input');
+ check.type='checkbox';check.checked=true;check.value=id;label.append(check,document.createTextNode(name));el('providers').append(label);
+ check.onchange=filterLabel;
+}
+function chosen(){return [...el('providers').querySelectorAll('input:checked')].map(x=>x.value);}
+function filterLabel(){el('filterButton').textContent='Filtre · '+chosen().length+'/'+Object.keys(providers).length;}
+function sources(item){return (item.provider||'').split(',').map(x=>providers[x]||x).join(' · ');}
+function sortCards(){
+ const mode=el('sort').value,area=x=>x.item.width>0&&x.item.height>0?x.item.width*x.item.height:0;
+ const rows=[...cards.values()].sort((a,b)=>{
+  if(mode==='large'||mode==='small'){const x=area(a),y=area(b);if(!x||!y)return x? -1:y?1:a.order-b.order;return (mode==='large'?y-x:x-y)||a.order-b.order;}
+  if(mode==='name')return a.item.title.localeCompare(b.item.title,'tr')||a.order-b.order;
+  if(mode==='source')return sources(a.item).localeCompare(sources(b.item),'tr')||a.order-b.order;
+  return a.order-b.order;
+ });
+ for(const c of rows)el('grid').append(c.node);
+}
+el('filterButton').onclick=()=>el('filters').showModal();
+el('closeFilters').onclick=()=>{filterLabel();el('filters').close();};
+el('selectSources').onclick=()=>{for(const x of el('providers').querySelectorAll('input'))x.checked=true;filterLabel();};
+el('clearSources').onclick=()=>{for(const x of el('providers').querySelectorAll('input'))x.checked=false;filterLabel();};
+el('sortButton').onclick=()=>el('sortDialog').showModal();
+el('closeSort').onclick=()=>el('sortDialog').close();
+el('sort').onchange=()=>{el('sortButton').textContent='Sırala · '+el('sort').selectedOptions[0].textContent;sortCards();};
+filterLabel();
 const pending=new Map();
 function api(action,data){
  return new Promise((resolve,reject)=>{
@@ -42,7 +76,7 @@ window.galleryReply=(id,json)=>{
  if(result.error)task.reject(new Error(result.error));else task.resolve(result);
 };
 function refresh(){
- el('more').hidden=!hasMore;el('more').disabled=busy;el('engine').disabled=busy;el('pinterest').disabled=busy;el('tools').hidden=!cards.size;el('go').disabled=busy;
+ el('more').hidden=!hasMore;el('more').disabled=busy;el('filterButton').disabled=busy;el('pinterest').disabled=busy;el('tools').hidden=!cards.size;el('go').disabled=busy;
  el('batch').disabled=busy||!selected.size;el('all').disabled=busy;
  el('all').textContent=selected.size===cards.size?'Seçimi kaldır':'Tümünü seç';
  el('batch').textContent='Seçilenleri indir ('+selected.size+')';
@@ -50,37 +84,49 @@ function refresh(){
  el('savePreview').disabled=busy;
 }
 function show(item){
- current=item;const img=el('large');el('caption').textContent=item.title;
- img.onerror=()=>{img.onerror=null;img.src=item.thumb;el('caption').textContent=item.title+' · Küçük önizleme';};
- img.src=item.url;el('preview').showModal();
+ current=item;const img=el('large');el('caption').textContent=item.title+' · '+sources(item)+(item.creator?' · '+item.creator:'')+(item.license?' · '+item.license:'');
+ img.onerror=()=>{if(item.fallback&&img.src!==item.fallback){img.src=item.fallback;return;}img.onerror=null;img.src=item.thumb;el('caption').textContent=item.title+' · Küçük önizleme';};
+ img.onload=()=>{if(img.src===item.url){item.width=img.naturalWidth;item.height=img.naturalHeight;}};img.src=item.url;el('preview').showModal();
 }
 function card(item){
  const a=document.createElement('article');
  a.innerHTML='<button class="photo" aria-label="Önizlemeyi aç"><img loading="lazy" referrerpolicy="no-referrer"></button><p></p><footer><label><input type="checkbox">Seç</label><button>İndir</button></footer>';
- const img=a.querySelector('img');img.alt=item.title;img.src=item.thumb;
+ const img=a.querySelector('img');img.alt=item.title;
+ let attempt=0;
+ const candidates=[...new Set([item.thumb,item.url,item.fallback].filter(Boolean))];
+ function retry(){if(++attempt<candidates.length)img.src=candidates[attempt];else{img.onerror=null;img.onload=null;img.removeAttribute('src');img.alt='Önizleme yok';}}
+ img.onerror=retry;
+ img.onload=()=>{
+  if(searchState&&searchState.clean&&(img.naturalWidth<96||img.naturalHeight<96)){retry();return;}
+  if(candidates[attempt]===item.url&&(!item.width||!item.height)){item.width=img.naturalWidth;item.height=img.naturalHeight;info.textContent=sources(item)+' · '+item.width+'×'+item.height;}
+ };
+ // Set src after the card and its metadata have been created.
  a.querySelector('.photo').onclick=()=>show(item);a.querySelector('p').textContent=item.title;
+ const info=document.createElement('p');info.textContent=sources(item)+(item.width&&item.height?' · '+item.width+'×'+item.height:'');info.title=info.textContent;a.querySelector('footer').before(info);
+ if(item.creatorUrl){const author=document.createElement('a');author.href=item.creatorUrl;author.textContent=(item.creator||'Fotoğrafçı')+' · Unsplash';author.style.cssText='display:block;font-size:12px;padding:0 9px 7px';a.querySelector('footer').before(author);}if(item.pageUrl){const link=document.createElement('a');link.href=item.pageUrl;link.textContent='Kaynak';link.rel='noopener noreferrer';link.style.cssText='display:block;font-size:12px;padding:0 9px 7px';a.querySelector('footer').before(link);}
  const check=a.querySelector('input'),save=a.querySelector('footer button');
  check.onchange=()=>{if(check.checked)selected.add(item.id);else selected.delete(item.id);refresh();};
- save.onclick=()=>downloads([item.id]);cards.set(item.id,{item,check,save});el('grid').append(a);
+ save.onclick=()=>downloads([item.id]);cards.set(item.id,{item,check,save,node:a,order:order++});el('grid').append(a);img.src=candidates[0];
 }
 async function downloads(ids){
  if(busy)return;busy=true;refresh();el('errors').textContent='';let saved=0;
  for(const [i,id] of ids.entries()){
   el('message').textContent='İndiriliyor · '+(i+1)+' / '+ids.length;
-  try{await api('save',{id});saved++;selected.delete(id);cards.get(id).save.textContent='İndirildi';}
+  try{const result=await api('save',{id});saved++;selected.delete(id);cards.get(id).save.textContent=result.fallback?'Alternatif':'İndirildi';}
   catch(e){el('errors').textContent+=cards.get(id).item.title+' — '+e.message+'\n';}
  }
  el('message').textContent=saved+' / '+ids.length+' görsel kaydedildi · Download/Google';busy=false;refresh();
 }
 el('form').onsubmit=async e=>{
  e.preventDefault();if(busy||!el('query').value.trim())return;busy=true;refresh();
- const engine=el('engine').value;
- el('message').textContent=el('engine').selectedOptions[0].textContent+' aranıyor…';el('errors').textContent='';
  const q=el('query').value.trim(), pinterest=el('pinterest').checked;
- const urls={google:'https://www.google.com/search?udm=2&q=',bing:'https://www.bing.com/images/search?q=',yandex:'https://yandex.com/images/search?text='};
- el('openEngine').href=urls[engine]+encodeURIComponent(pinterest?(engine==='bing'?q+' Pinterest':q+' site:pinterest.com'):q);el('openEngine').hidden=false;
- cards.clear();selected.clear();el('grid').replaceChildren();refresh();
- searchState={q,engine,pinterest,key:engine==='google'?el('apiKey').value.trim():'',commons:!pinterest&&el('fallback').checked};
+ let selectedProviders=chosen();
+ if(pinterest)selectedProviders=selectedProviders.filter(x=>['pinterest','bing','google','yandex'].includes(x));
+ if(!selectedProviders.length){el('errors').textContent='En az bir kaynak seçin.';busy=false;refresh();return;}
+ el('message').textContent=selectedProviders.length+' kaynak paralel aranıyor…';el('errors').textContent='';
+ el('sourceDetails').hidden=true;
+ cards.clear();selected.clear();order=0;el('grid').replaceChildren();refresh();
+ searchState={q,providers:selectedProviders,pinterest,clean:el('clean').checked,keys:{serpapi:el('apiKey').value.trim(),pexels:el('pexelsKey').value.trim(),pixabay:el('pixabayKey').value.trim(),unsplash:el('unsplashKey').value.trim()}};
  nextPage=0;hasMore=false;await loadPage();
 };
 async function loadPage(){
@@ -90,13 +136,15 @@ async function loadPage(){
   const before=cards.size;
   for(const item of result.rows)if(!cards.has(item.id))card(item);
   hasMore=result.more&&cards.size>before;nextPage++;
+  if(result.nextProviders)searchState.providers=result.nextProviders;
+  if(result.status){el('sourceDetails').hidden=false;el('sourceStatus').textContent=Object.entries(result.status).map(([id,count])=>(providers[id]||id)+': '+(count<0?'erişilemedi / zaman aşımı':count===0?'sonuç yok / engelli':count+' görsel')).join(' · ');}
+  sortCards();
   el('message').textContent=[result.notice,result.source+' · '+cards.size+' görsel',cards.size===before?'Başka sonuç bulunamadı.':''].filter(Boolean).join(' ');
  } catch(e){el('errors').textContent=e.message;el('message').textContent=cards.size?cards.size+' görsel':'Arama tamamlanamadı.';}
  finally{busy=false;refresh();}
 }
 el('more').onclick=loadPage;
-el('pinterest').onchange=()=>{el('fallbackLabel').hidden=el('pinterest').checked;el('openEngine').hidden=true;};
-el('engine').onchange=()=>{el('apiOptions').hidden=el('engine').value!=='google';el('openEngine').hidden=true;};
+
 el('all').onclick=()=>{if(selected.size===cards.size)selected.clear();else for(const id of cards.keys())selected.add(id);refresh();};
 el('batch').onclick=()=>downloads([...selected]);
 el('closePreview').onclick=()=>el('preview').close();

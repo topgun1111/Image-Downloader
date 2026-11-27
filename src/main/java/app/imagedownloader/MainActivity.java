@@ -58,17 +58,25 @@ public final class MainActivity extends Activity {
                 try {
                     JSONObject req=new JSONObject(data);
                     if(action.equals("search")){
-                        answer=Search.run(req);
+                        answer=req.has("providers")?MultiSearch.run(req):Search.run(req);
                         if(req.optInt("page",0)==0) known.clear();
                         JSONArray rows=answer.getJSONArray("rows");
                         for(int i=0;i<rows.length();i++){
                             JSONObject row=rows.getJSONObject(i);String url=row.getString("url");
-                            known.put(url,new String[]{url,req.getString("q")});row.put("id",url);
+                            known.put(url,new String[]{url,req.getString("q"),row.optString("fallback"),String.valueOf(req.optBoolean("clean",true)),row.optString("tracking"),req.optJSONObject("keys")==null?"":req.optJSONObject("keys").optString("unsplash")});row.put("id",url);
                         }
                     } else if(action.equals("save")){
                         String[] item=known.get(req.getString("id"));
                         if(item==null) throw new IOException("Aramayı yenileyin.");
-                        save(item[0],item[1]);answer=new JSONObject();
+                        boolean clean=Boolean.parseBoolean(item[3]);
+                        if(!item[4].isEmpty())MultiSearch.trackUnsplash(item[4],item[5]);
+                        boolean fallback=false;
+                        try {save(item[0],item[1],clean);}
+                        catch(Exception e){
+                            if(item[2].isEmpty()||Thread.currentThread().isInterrupted())throw e;
+                            save(item[2],item[1],clean);fallback=true;
+                        }
+                        answer=new JSONObject().put("fallback",fallback);
                     } else throw new IOException("Geçersiz işlem.");
                 } catch(Exception e){
                     answer=new JSONObject();
@@ -79,7 +87,7 @@ public final class MainActivity extends Activity {
             });
         }
     }
-    private void save(String url,String query) throws Exception {
+    private void save(String url,String query,boolean clean) throws Exception {
         HttpURLConnection c=Search.open(url);
         Uri dest=null;boolean complete=false;
         try(BufferedInputStream in=new BufferedInputStream(c.getInputStream())){
@@ -107,6 +115,15 @@ public final class MainActivity extends Activity {
                 }
                 long expected=c.getContentLengthLong();
                 if(c.getContentEncoding()==null && expected>=0 && total!=expected) throw new IOException("Eksik dosya.");
+            }
+            if(clean){
+                android.graphics.BitmapFactory.Options bounds=new android.graphics.BitmapFactory.Options();
+                bounds.inJustDecodeBounds=true;
+                try(InputStream check=resolver.openInputStream(dest)){
+                    if(check!=null)android.graphics.BitmapFactory.decodeStream(check,null,bounds);
+                }
+                if((bounds.outWidth>0&&bounds.outWidth<96)||(bounds.outHeight>0&&bounds.outHeight<96))
+                    throw new IOException("Çok küçük görsel / yer tutucu reddedildi.");
             }
             values.clear();values.put(MediaStore.MediaColumns.IS_PENDING,0);
             if(resolver.update(dest,values,null,null)!=1)throw new IOException("Kayıt tamamlanamadı.");

@@ -23,7 +23,7 @@ final class Search {
         HttpURLConnection c = (HttpURLConnection)new URL(url).openConnection();
         c.setRequestProperty("User-Agent",UA);
         c.setRequestProperty("Accept-Language","tr-TR,tr;q=0.9");
-        c.setConnectTimeout(15000); c.setReadTimeout(20000);
+        c.setConnectTimeout(8000); c.setReadTimeout(12000);
         return c;
     }
     static String read(String url) throws IOException {
@@ -31,6 +31,7 @@ final class Search {
         try (InputStream in=c.getInputStream(); ByteArrayOutputStream out=new ByteArrayOutputStream()) {
             byte[] b=new byte[16384]; int n;
             while ((n=in.read(b))!=-1) {
+                if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();
                 if (out.size()+n>12000000) throw new IOException("Arama yanıtı çok büyük.");
                 out.write(b,0,n);
             }
@@ -92,7 +93,11 @@ final class Search {
     }
     static void addResult(Map<String,JSONObject> rows, boolean pinterest, String pageUrl,
                           String original, String thumb, String title) throws JSONException {
-        if (!pinterest || pinterestSource(pageUrl) || pinterestHost(original)) add(rows,original,thumb,title);
+        if (!pinterest || pinterestSource(pageUrl) || pinterestHost(original)) {
+            add(rows,original,thumb,title);
+            JSONObject row=rows.get(normalize(original));
+            if(row!=null && web(pageUrl))row.put("pageUrl",pageUrl);
+        }
     }
     static void yandex(Object node,Map<String,JSONObject> rows,boolean pinterest) throws JSONException {
         if (node instanceof JSONArray) {
@@ -114,6 +119,8 @@ final class Search {
                 String thumb=first(field(o,"image"),field(o,"thumb"),field(viewer,"thumb"));
                 String title=first(field(o,"alt"),field(o,"title"),field(snippet,"title"));
                 addResult(rows,pinterest,page,original,thumb,title);
+                JSONObject row=rows.get(normalize(original));
+                if(row!=null)row.put("width",o.optInt("width",0)).put("height",o.optInt("height",0));
             } else for (Iterator<String> it=o.keys();it.hasNext();) yandex(o.get(it.next()),rows,pinterest);
         }
     }
@@ -122,7 +129,7 @@ final class Search {
         switch(engine) {
             case "bing": return "https://www.bing.com/images/async?q="+term+"&first="+(page==0?0:page*35+1)+"&count=35";
             case "yandex": return "https://yandex.com/images/search?text="+term+(page==0?"":"&p="+page);
-            case "google": return "https://www.google.com/search?udm=2&hl=tr&q="+term;
+            case "google": return "https://www.google.com/search?udm=2&hl=tr&q="+term+"&start="+(page*20);
             default: throw new IOException("Geçersiz arama motoru.");
         }
     }
@@ -133,6 +140,8 @@ final class Search {
                 try {
                     JSONObject o=new JSONObject(e.attr("m"));
                     addResult(rows,pinterest,o.optString("purl"),o.optString("murl"),o.optString("turl"),o.optString("t"));
+                    JSONObject row=rows.get(normalize(o.optString("murl")));
+                    if(row!=null)row.put("width",o.optInt("ow",o.optInt("w",0))).put("height",o.optInt("oh",o.optInt("h",0)));
                 } catch(JSONException ignored) {}
             }
         } else if (engine.equals("yandex")) {
@@ -180,7 +189,7 @@ final class Search {
         boolean more=!engine.equals("google");
         try {
             if(engine.equals("google")&&!key.isEmpty()){
-                JSONObject data=new JSONObject(read("https://serpapi.com/search.json?engine=google_images&hl=tr&gl=tr&q="+enc(term)+"&api_key="+enc(key)));
+                JSONObject data=new JSONObject(read("https://serpapi.com/search.json?engine=google_images&ijn="+page+"&hl=tr&gl=tr&q="+enc(term)+"&api_key="+enc(key)));
                 if(data.has("error")) throw new IOException("SerpApi anahtarını ve kotayı kontrol edin.");
                 JSONArray a=data.optJSONArray("images_results");
                 if(a!=null) for(int i=0;i<a.length();i++){
