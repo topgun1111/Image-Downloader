@@ -32,6 +32,11 @@ main{padding-bottom:150px}
 <div class="tools"><button id="filterButton" type="button">Filtre · Tümü</button><button id="sortButton" type="button">Sırala · Önerilen</button></div><label for="engine" hidden>Arama motoru</label>
 <form id="form"><input id="query" type="search" placeholder="Tüm kaynaklarda görsel ara" aria-label="Arama" maxlength="256" required><button id="go">Ara</button></form>
 <dialog id="filters"><header><strong>Arama filtreleri</strong><button id="closeFilters" type="button">Tamam</button></header>
+<h3>Arama dili ve ülke</h3>
+<label for="languageMode">Dil modu</label><select id="languageMode" style="width:100%;font:inherit;padding:10px"><option value="auto">Akıllı otomatik</option><option value="all">Tüm desteklenen diller</option><option value="selected">Seçilen diller</option><option value="local">Ülkeye özel</option></select>
+<div id="languageChoices" hidden><div class="tools"><button id="allLanguages" type="button">Tümünü seç</button><button id="clearLanguages" type="button">Temizle</button></div><div id="languageList" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 10px;max-height:260px;overflow:auto"></div></div>
+<div id="localChoices" hidden><label for="localCountry">Ülke</label><select id="localCountry" style="width:100%;font:inherit;padding:10px"></select><label for="localLanguage">Dil</label><select id="localLanguage" style="width:100%;font:inherit;padding:10px"></select></div>
+<label><input id="translationWifi" type="checkbox" checked>Çeviri modellerini yalnızca Wi-Fi ile indir</label><p style="font-size:13px">Diller kaydırdıkça sırayla aranır. Model hazır değilse özgün sorgu kullanılır. Ülkeye özel mod yalnızca tanınabilen ülke kaynaklarını gösterir.</p>
 <h3>Akıllı arama</h3>
 <label for="precision">Arama hassasiyeti</label><select id="precision" style="width:100%;font:inherit;padding:10px"><option value="fast">Hızlı · metin filtresi</option><option value="balanced">Dengeli</option><option value="strict" selected>Sıkı · önerilen</option><option value="ultra">Çok sıkı</option></select>
 <label><input type="checkbox" id="ai" checked>MobileCLIP görsel AI</label>
@@ -81,6 +86,38 @@ for(const [id,name] of Object.entries(providers)){
  check.type='checkbox';check.checked=true;check.value=id;label.append(check,document.createTextNode(name));el('providers').append(label);
  check.onchange=filterLabel;
 }
+const languageCodes='en tr es pt ru de fr it ja zh ko ar hi nl pl id vi th uk fa sv da fi no el cs ro hu he ms bn ta te ur bg hr sk sl sr lt lv et ca af sq be cy eo ga gl ht is ka mk mt sw tl'.split(' ');
+const languageCountries='US TR ES BR RU DE FR IT JP CN KR SA IN NL PL ID VN TH UA IR SE DK FI NO GR CZ RO HU IL MY BD IN IN PK BG HR SK SI RS LT LV EE ES ZA AL BY GB US IE ES HT IS GE MK MT KE PH'.split(' ');
+const langDisplay=typeof Intl.DisplayNames==='function'?new Intl.DisplayNames(['tr'],{type:'language'}):null;
+const regionDisplay=typeof Intl.DisplayNames==='function'?new Intl.DisplayNames(['tr'],{type:'region'}):null;
+for(const code of languageCodes){
+ const label=document.createElement('label'),check=document.createElement('input');
+ check.type='checkbox';check.value=code;check.checked=['en','tr','es','ru','ja','zh'].includes(code);check.onchange=rememberLanguage;
+ const name=langDisplay?langDisplay.of(code):code;label.append(check,document.createTextNode(name));el('languageList').append(label);
+ el('localLanguage').add(new Option(name,code));
+}
+for(const code of [...new Set(languageCountries.concat(['GB','CA','AU','MX','AT','CH','BE','NZ','TW','HK']))].sort())el('localCountry').add(new Option(regionDisplay?regionDisplay.of(code):code,code));
+el('localCountry').value='TR';el('localLanguage').value='tr';
+function languageSelection(){return [...el('languageList').querySelectorAll('input:checked')].map(x=>x.value);}
+function languageSettings(){return {languageMode:el('languageMode').value,languages:languageSelection(),localLanguage:el('localLanguage').value,localCountry:el('localCountry').value,translationWifi:el('translationWifi').checked};}
+function rememberLanguage(){
+ el('languageChoices').hidden=el('languageMode').value!=='selected';el('localChoices').hidden=el('languageMode').value!=='local';
+ try{localStorage.setItem('searchLanguages',JSON.stringify(languageSettings()));}catch(e){}
+}
+try{
+ const saved=JSON.parse(localStorage.getItem('searchLanguages')||'null');
+ if(saved){
+  if(['auto','all','selected','local'].includes(saved.languageMode))el('languageMode').value=saved.languageMode;
+  if(Array.isArray(saved.languages))for(const x of el('languageList').querySelectorAll('input'))x.checked=saved.languages.includes(x.value);
+  if(languageCodes.includes(saved.localLanguage))el('localLanguage').value=saved.localLanguage;
+  if([...el('localCountry').options].some(x=>x.value===saved.localCountry))el('localCountry').value=saved.localCountry;
+  el('translationWifi').checked=saved.translationWifi!==false;
+ }
+}catch(e){}
+for(const id of ['languageMode','localLanguage','translationWifi'])el(id).onchange=rememberLanguage;
+el('localCountry').onchange=()=>{const i=languageCountries.indexOf(el('localCountry').value);if(i>=0)el('localLanguage').value=languageCodes[i];rememberLanguage();};
+for(const [id,value] of [['allLanguages',true],['clearLanguages',false]])el(id).onclick=()=>{for(const x of el('languageList').querySelectorAll('input'))x.checked=value;rememberLanguage();};
+rememberLanguage();
 function chosen(){return [...el('providers').querySelectorAll('input:checked')].map(x=>x.value);}
 function filterLabel(){el('filterButton').textContent='Filtre · '+chosen().length+'/'+Object.keys(providers).length;}
 function sources(item){return (item.provider||'').split(',').map(x=>providers[x]||x).join(' · ');}
@@ -185,7 +222,7 @@ function card(item){
  img.onload=loaded;
  // Set src after the card and its metadata have been created.
  a.querySelector('.photo').onclick=()=>show(item);a.querySelector('p').textContent=item.title;
- const info=document.createElement('p');info.textContent=sources(item)+(item.width&&item.height?' · '+item.width+'×'+item.height:'');info.title=info.textContent;a.querySelector('footer').before(info);const relevance=document.createElement('p');relevance.textContent=(item.discovery?'Derin keşif · ':'')+(item.preliminary?'Ön sonuç · doğrulama bekleniyor':item.aiChecked?'AI + metin eşleşmesi':'Metin eşleşmesi');relevance.style.color='#365477';a.querySelector('footer').before(relevance);
+ const info=document.createElement('p');info.textContent=sources(item)+(item.width&&item.height?' · '+item.width+'×'+item.height:'');if(item.searchLanguage)info.textContent+=' · '+item.searchLanguage;info.title=info.textContent;a.querySelector('footer').before(info);const relevance=document.createElement('p');relevance.textContent=(item.discovery?'Derin keşif · ':'')+(item.preliminary?'Ön sonuç · doğrulama bekleniyor':item.aiChecked?'AI + metin eşleşmesi':'Metin eşleşmesi');relevance.style.color='#365477';a.querySelector('footer').before(relevance);
  if(item.creatorUrl){const author=document.createElement('a');author.href=item.creatorUrl;author.textContent=(item.creator||'Fotoğrafçı')+' · Unsplash';author.style.cssText='display:block;font-size:12px;padding:0 9px 7px';a.querySelector('footer').before(author);}if(item.pageUrl){const link=document.createElement('a');link.href=item.pageUrl;link.textContent='Kaynak';link.rel='noopener noreferrer';link.style.cssText='display:block;font-size:12px;padding:0 9px 7px';a.querySelector('footer').before(link);}
  const check=a.querySelector('input'),save=a.querySelector('footer button');
  check.onchange=()=>{if(check.checked)selected.add(item.id);else selected.delete(item.id);refresh();};
@@ -261,12 +298,13 @@ el('form').onsubmit=async e=>{
  let selectedProviders=chosen();
  if(!el('deep').checked)selectedProviders=selectedProviders.filter(x=>!['deepweb','officialmedia','fangalleries'].includes(x));
  if(pinterest)selectedProviders=selectedProviders.filter(x=>['pinterest','bing','google','yandex'].includes(x));
+ if(el('languageMode').value==='selected'&&!languageSelection().length){el('errors').textContent='En az bir dil seçin.';busy=false;refresh();return;}
  if(!selectedProviders.length){el('errors').textContent='En az bir kaynak seçin.';busy=false;refresh();return;}
  el('message').textContent=selectedProviders.length+' kaynak paralel aranıyor…';el('errors').textContent='';
  el('sourceDetails').hidden=true;
  if(imageWatcher)imageWatcher.disconnect();
  cancelAutoTimer();cards.clear();selected.clear();order=0;emptyBatches=0;feedErrors=0;autoPaused=false;stopped=false;stopRequested=false;hasMore=false;searchSession++;el('grid').replaceChildren();refresh();
- searchState={q,session:searchSession,providers:selectedProviders,cursors:{},pinterest,clean:el('clean').checked,precision:el('precision').value,ai:el('ai').checked,duplicates:el('duplicates').checked,keys:{serpapi:el('apiKey').value.trim(),pexels:el('pexelsKey').value.trim(),pixabay:el('pixabayKey').value.trim(),unsplash:el('unsplashKey').value.trim()}};
+ searchState={...languageSettings(),q,session:searchSession,providers:selectedProviders,cursors:{},pinterest,clean:el('clean').checked,precision:el('precision').value,ai:el('ai').checked,duplicates:el('duplicates').checked,keys:{serpapi:el('apiKey').value.trim(),pexels:el('pexelsKey').value.trim(),pixabay:el('pixabayKey').value.trim(),unsplash:el('unsplashKey').value.trim()}};
  nextPage=0;hasMore=false;busy=false;await loadPage();
 };
 async function loadPage(){

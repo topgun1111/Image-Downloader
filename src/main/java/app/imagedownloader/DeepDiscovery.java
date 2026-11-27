@@ -51,6 +51,7 @@ final class DeepDiscovery {
         HttpURLConnection c=(HttpURLConnection)u.openConnection();
         c.setConnectTimeout(4500);c.setReadTimeout(6500);c.setInstanceFollowRedirects(false);
         c.setRequestProperty("User-Agent",Search.WIKI_UA);
+        c.setRequestProperty("Accept-Language",SearchLanguages.active()+","+SearchLanguages.language()+";q=0.9");
         c.setRequestProperty("Accept",robots?"text/plain":"text/html,application/xhtml+xml");
         SearchCancellation.track(c);
         try{
@@ -178,7 +179,7 @@ final class DeepDiscovery {
         String[] options=variants(query);int variant=page%options.length,offset=page/options.length;
         String term=options[variant];
         try{
-            String html=Search.read("https://www.bing.com/search?q="+Search.enc(term)+"&first="+(offset*10+1));
+            String html=Search.read("https://www.bing.com/search?q="+Search.enc(term)+"&first="+(offset*10+1)+SearchLanguages.bingParams());
             if(!Search.blocked(html)){
                 Document doc=Jsoup.parse(html,"https://www.bing.com/");
                 for(Element a:doc.select("li.b_algo h2 a[href]")){

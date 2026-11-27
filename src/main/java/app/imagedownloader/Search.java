@@ -37,7 +37,7 @@ final class Search {
         HttpURLConnection c = (HttpURLConnection)new URL(url).openConnection();
         String h=host(url);
         c.setRequestProperty("User-Agent",h.equals("wikimedia.org")||h.endsWith(".wikimedia.org")?WIKI_UA:UA);
-        c.setRequestProperty("Accept-Language","tr-TR,tr;q=0.9");
+        c.setRequestProperty("Accept-Language",SearchLanguages.active()+","+SearchLanguages.language()+";q=0.9,en;q=0.5");
         // Only search requests use the shorter initial network budget; downloads keep their existing timeout.
         boolean searching=SearchCancellation.current()!=null;
         c.setConnectTimeout(searching?searchTimeout(h,true):8000); c.setReadTimeout(searching?searchTimeout(h,false):12000);
@@ -147,9 +147,9 @@ final class Search {
     static String endpoint(String engine,String q,int page) throws IOException {
         String term=enc(q);
         switch(engine) {
-            case "bing": return "https://www.bing.com/images/async?q="+term+"&first="+(page==0?0:page*35+1)+"&count=35";
-            case "yandex": return "https://yandex.com/images/search?text="+term+(page==0?"":"&p="+page);
-            case "google": return "https://www.google.com/search?udm=2&hl=tr&q="+term+"&start="+(page*20);
+            case "bing": return "https://www.bing.com/images/async?q="+term+"&first="+(page==0?0:page*35+1)+"&count=35"+SearchLanguages.bingParams();
+            case "yandex": return "https://yandex.com/images/search?text="+term+(page==0?"":"&p="+page)+SearchLanguages.yandexParams();
+            case "google": return "https://www.google.com/search?udm=2&q="+term+"&start="+(page*20)+SearchLanguages.googleParams();
             default: throw new IOException("Geçersiz arama motoru.");
         }
     }
@@ -209,7 +209,7 @@ final class Search {
         boolean more=!engine.equals("google");
         try {
             if(engine.equals("google")&&!key.isEmpty()){
-                JSONObject data=new JSONObject(read("https://serpapi.com/search.json?engine=google_images&ijn="+page+"&hl=tr&gl=tr&q="+enc(term)+"&api_key="+enc(key)));
+                JSONObject data=new JSONObject(read("https://serpapi.com/search.json?engine=google_images&ijn="+page+SearchLanguages.googleParams()+"&q="+enc(term)+"&api_key="+enc(key)));
                 if(data.has("error")) throw new IOException("SerpApi anahtarını ve kotayı kontrol edin.");
                 JSONArray a=data.optJSONArray("images_results");
                 if(a!=null) for(int i=0;i<a.length();i++){

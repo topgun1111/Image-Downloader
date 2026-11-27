@@ -22,6 +22,11 @@ final class Relevance {
         return "\""+q.replace("\"","")+"\"";
     }
     static double score(String q,JSONObject r){
+        String localized=r.optString("localizedQuery");
+        double original=scoreText(q,r);
+        return localized.isEmpty()||localized.equals(q)||strictName(q)?original:Math.max(original,scoreText(localized,r));
+    }
+    private static double scoreText(String q,JSONObject r){
         String normalized=norm(q);
         boolean toca=DeepDiscovery.toca(q);
         if(toca)q=normalized.replaceAll("\\btoca\\s+(boca|life)(\\s+world)?\\b|\\btocaboca\\b","toca");

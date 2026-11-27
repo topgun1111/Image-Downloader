@@ -271,16 +271,16 @@ final class MultiSearch {
             }
             if(out.isEmpty()&&id.equals("bing")){
                 Map<String,JSONObject> tmp=new LinkedHashMap<>();
-                Search.parse(id,Search.read("https://www.bing.com/images/search?q="+Search.enc(engineTerm)+"&first="+(page*35+1)),tmp,pinterestOnly);
+                Search.parse(id,Search.read("https://www.bing.com/images/search?q="+Search.enc(engineTerm)+"&first="+(page*35+1)+SearchLanguages.bingParams()),tmp,pinterestOnly);
                 copy(id,tmp,out,clean,false);
             }
             if(out.isEmpty()&&id.equals("google")){
                 Map<String,JSONObject> tmp=new LinkedHashMap<>();
-                Search.parse(id,Search.read("https://www.google.com/search?tbm=isch&q="+Search.enc(engineTerm)+"&start="+(page*20)),tmp,pinterestOnly);copy(id,tmp,out,clean,false);
+                Search.parse(id,Search.read("https://www.google.com/search?tbm=isch&q="+Search.enc(engineTerm)+"&start="+(page*20)+SearchLanguages.googleParams()),tmp,pinterestOnly);copy(id,tmp,out,clean,false);
             }
             if(out.isEmpty()&&id.equals("yandex")){
                 Map<String,JSONObject> tmp=new LinkedHashMap<>();
-                Search.parse(id,Search.read("https://yandex.ru/images/search?text="+Search.enc(engineTerm)+"&p="+page),tmp,pinterestOnly);copy(id,tmp,out,clean,false);
+                Search.parse(id,Search.read("https://yandex.com/images/search?text="+Search.enc(engineTerm)+"&p="+page+SearchLanguages.yandexParams()),tmp,pinterestOnly);copy(id,tmp,out,clean,false);
             }
             return out;
         }
@@ -332,6 +332,50 @@ final class MultiSearch {
     }
     static JSONObject run(JSONObject req)throws Exception{return run(req,rows->{});}
     static JSONObject run(JSONObject req,Partial partial)throws Exception{
+        if(!req.has("languageMode"))return runSingle(req,partial);
+        List<String> plan=SearchLanguages.plan(req);
+        JSONObject input=req.optJSONObject("cursors");
+        JSONObject state=input==null?new JSONObject():new JSONObject(input.toString());
+        JSONArray chosen=req.optJSONArray("providers");
+        if(chosen==null)chosen=new JSONArray(Arrays.asList(IDS));
+        int start=Math.max(0,state.optInt("_rotation",0))%plan.size(),index=-1;
+        for(int i=0;i<plan.size();i++){
+            int candidate=(start+i)%plan.size();
+            JSONObject previous=state.optJSONObject(plan.get(candidate));
+            if(previous==null||previous.optBoolean("more",true)){index=candidate;break;}
+        }
+        if(index<0)return new JSONObject().put("rows",new JSONArray()).put("source","Çoklu arama").put("more",false).put("nextProviders",chosen).put("nextCursors",state);
+        String locale=plan.get(index),original=req.getString("q");
+        JSONObject old=state.optJSONObject(locale);
+        String query=SearchLanguages.translate(original,locale.split("-")[0],req.optBoolean("translationWifi",true));
+        SearchCancellation.check();
+        if(old!=null&&!query.equals(old.optString("query",original)))old=null;
+        JSONObject single=new JSONObject(req.toString()).put("q",query).put("locale",locale).put("page",old==null?0:old.optInt("page"));
+        single.put("providers",old==null?chosen:old.getJSONArray("providers"));
+        single.put("cursors",old==null?new JSONObject():old.getJSONObject("cursors"));
+        final boolean restricted=SearchLanguages.restricted(req);
+        final String country=locale.split("-")[1];
+        JSONObject answer=runSingle(single,rows->partial.accept(localRows(rows,query,locale,restricted,country)));
+        answer.put("rows",localRows(answer.getJSONArray("rows"),query,locale,restricted,country));
+        state.put(locale,new JSONObject().put("query",query).put("page",single.optInt("page")+1)
+            .put("providers",answer.getJSONArray("nextProviders")).put("cursors",answer.getJSONObject("nextCursors")).put("more",answer.optBoolean("more")));
+        state.put("_rotation",(index+1)%plan.size());
+        boolean more=false;for(String language:plan){JSONObject s=state.optJSONObject(language);if(s==null||s.optBoolean("more")){more=true;break;}}
+        answer.put("nextProviders",chosen).put("nextCursors",state).put("more",more)
+            .put("source","Çoklu arama · "+locale)
+            .put("notice",restricted?"Ülke kaynak filtresi: "+country:"");
+        return answer;
+    }
+    private static JSONArray localRows(JSONArray rows,String query,String locale,boolean restricted,String country)throws JSONException{
+        JSONArray result=new JSONArray();
+        for(int i=0;i<rows.length();i++){
+            JSONObject row=rows.getJSONObject(i);
+            if(restricted&&!SearchLanguages.countrySource(row,country))continue;
+            row.put("searchLanguage",locale).put("localizedQuery",query);result.put(row);
+        }
+        return result;
+    }
+    private static JSONObject runSingle(JSONObject req,Partial partial)throws Exception{
         String q=req.optString("q").trim();int page=req.optInt("page",0);
         if(q.isEmpty()||q.length()>256||page<0||page>1000)throw new IOException("Geçersiz arama.");
         JSONArray chosen=req.optJSONArray("providers");
@@ -348,6 +392,7 @@ final class MultiSearch {
         JSONObject status=new JSONObject();JSONArray next=new JSONArray();
         JSONObject cursors=req.optJSONObject("cursors"),nextCursors=new JSONObject();
         final SearchCancellation cancellation=SearchCancellation.current();
+        final String locale=req.optString("locale","en-US");
         try{
             List<String> scheduled=new ArrayList<>(ids);scheduled.sort(Comparator.comparingLong(MultiSearch::priority));
             for(String id:scheduled){
@@ -355,9 +400,10 @@ final class MultiSearch {
                 final int position=state==null?page:Math.max(0,Math.min(1000,state.optInt("page",page)));
                 pending.put(completion.submit(()->{
                 if(cancellation!=null)cancellation.enter();
+                SearchLanguages.enter(locale);
                 try{
                 SearchCancellation.check();
-                String cacheKey=new JSONArray().put(id).put(q).put(position).put(clean).put(pinterestOnly)
+                String cacheKey=new JSONArray().put(id).put(q).put(locale).put(position).put(clean).put(pinterestOnly)
                     .put(credentials.optString("serpapi")).put(credentials.optString("pexels"))
                     .put(credentials.optString("pixabay")).put(credentials.optString("unsplash")).toString();
                 cacheKey=java.util.UUID.nameUUIDFromBytes(cacheKey.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
@@ -375,7 +421,7 @@ final class MultiSearch {
                 long elapsed=TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);
                 timings.merge(id,Math.max(1,elapsed),(old,value)->(old*3+value)/4);
                 remember(cacheKey,rows);return rows;
-                }finally{if(cancellation!=null)cancellation.leave();}
+                }finally{SearchLanguages.leave();if(cancellation!=null)cancellation.leave();}
             }),id);}
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(65);
             while(!pending.isEmpty()){
