@@ -37,7 +37,7 @@ final class VisualAI implements AutoCloseable {
             MessageDigest hash=MessageDigest.getInstance("SHA-256");
             try(InputStream in=c.getInputStream();FileOutputStream out=new FileOutputStream(part)){
                 byte[] buf=new byte[65536];long size=0;int n;long last=0;
-                while((n=in.read(buf))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();size+=n;if(size>max)throw new IOException("Model dosyası çok büyük.");out.write(buf,0,n);hash.update(buf,0,n);
+                while((n=in.read(buf))!=-1){SearchCancellation.check();size+=n;if(size>max)throw new IOException("Model dosyası çok büyük.");out.write(buf,0,n);hash.update(buf,0,n);
                     if(size-last>1000000){last=size;p.update(dest.getName()+" · "+size/1000000+" MB");}}
                 if(size==0)throw new IOException("Boş model dosyası.");
             }
@@ -114,10 +114,10 @@ final class VisualAI implements AutoCloseable {
                 if(code!=200)throw new IOException("Görsel alınamadı.");
                 try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
                     byte[] buf=new byte[16384];int n;
-                    while((n=in.read(buf))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();if(out.size()+n>4000000)throw new IOException("Önizleme çok büyük.");out.write(buf,0,n);}
+                    while((n=in.read(buf))!=-1){SearchCancellation.check();if(out.size()+n>4000000)throw new IOException("Önizleme çok büyük.");out.write(buf,0,n);}
                     return out.toByteArray();
                 }
-            }finally{c.disconnect();}
+            }finally{SearchCancellation.close(c);}
         }
         throw new IOException("Çok fazla yönlendirme.");
     }
@@ -161,7 +161,7 @@ final class VisualAI implements AutoCloseable {
         int evaluated=0,limit=mode.equals("ultra")?100:mode.equals("strict")?65:45;
         long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(55);
         for(JSONObject row:candidates){
-            if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();
+            SearchCancellation.check();
             Double visual=null;Sample sample=null;
             // A name must have metadata evidence; never use image vectors to identify a person.
             boolean name=Relevance.strictName(q);
@@ -170,6 +170,7 @@ final class VisualAI implements AutoCloseable {
                 evaluated++;
                 try{sample=sample(row.optString("thumb",row.optString("url")),active&&(!name||sportsName));if(active&&sample.vector!=null)visual=cosine(name?sports:target,sample.vector);}catch(Exception ignored){}
             }
+            SearchCancellation.check();
             if(!Relevance.admit(q,row,mode,visual))continue;
             if(sportsName&&visual!=null&&visual<.12&&(mode.equals("strict")||mode.equals("ultra")))continue;
             if(duplicates&&sample!=null){
@@ -181,6 +182,7 @@ final class VisualAI implements AutoCloseable {
             if(batch.length()>=8){emit.accept(batch);batch=new JSONArray();}
             if(evaluated>0&&evaluated%10==0&&sample!=null)p.update("Görseller değerlendiriliyor · "+evaluated);
         }
+        SearchCancellation.check();
         if(batch.length()>0)emit.accept(batch);
         return result;
     }

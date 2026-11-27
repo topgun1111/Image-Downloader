@@ -20,12 +20,14 @@ final class Search {
     }
     static String enc(String s) throws IOException {return URLEncoder.encode(s, "UTF-8");}
     static HttpURLConnection open(String url) throws IOException {
+        SearchCancellation.check();
         if (!web(url)) throw new IOException("Geçersiz görsel adresi.");
         HttpURLConnection c = (HttpURLConnection)new URL(url).openConnection();
         String h=host(url);
         c.setRequestProperty("User-Agent",h.equals("wikimedia.org")||h.endsWith(".wikimedia.org")?WIKI_UA:UA);
         c.setRequestProperty("Accept-Language","tr-TR,tr;q=0.9");
         c.setConnectTimeout(8000); c.setReadTimeout(12000);
+        SearchCancellation.track(c);
         return c;
     }
     static String read(String url) throws IOException {
@@ -33,12 +35,12 @@ final class Search {
         try (InputStream in=c.getInputStream(); ByteArrayOutputStream out=new ByteArrayOutputStream()) {
             byte[] b=new byte[16384]; int n;
             while ((n=in.read(b))!=-1) {
-                if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();
+                SearchCancellation.check();
                 if (out.size()+n>12000000) throw new IOException("Arama yanıtı çok büyük.");
                 out.write(b,0,n);
             }
             return out.toString("UTF-8");
-        } finally { c.disconnect(); }
+        } finally { SearchCancellation.close(c); }
     }
     static String normalize(String url) {
         if(url==null)return "";

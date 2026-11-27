@@ -46,11 +46,13 @@ final class DeepDiscovery {
         return true;
     }
     private static String read(URL u,int max,boolean robots)throws IOException{
+        SearchCancellation.check();
         if(!publicAddress(u))throw new IOException("Yerel veya güvensiz adres.");
         HttpURLConnection c=(HttpURLConnection)u.openConnection();
         c.setConnectTimeout(4500);c.setReadTimeout(6500);c.setInstanceFollowRedirects(false);
         c.setRequestProperty("User-Agent",Search.WIKI_UA);
         c.setRequestProperty("Accept",robots?"text/plain":"text/html,application/xhtml+xml");
+        SearchCancellation.track(c);
         try{
             int status=c.getResponseCode();
             if(robots&&(status==404||status==410))return "";
@@ -59,10 +61,10 @@ final class DeepDiscovery {
             if(!robots&&(type==null||!type.toLowerCase(Locale.ROOT).contains("html")))throw new IOException("HTML değil.");
             try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
                 byte[] buf=new byte[8192];int n;
-                while((n=in.read(buf))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();if(out.size()+n>max)throw new IOException("Sayfa çok büyük.");out.write(buf,0,n);}
+                while((n=in.read(buf))!=-1){SearchCancellation.check();if(out.size()+n>max)throw new IOException("Sayfa çok büyük.");out.write(buf,0,n);}
                 return out.toString("UTF-8");
             }
-        }finally{c.disconnect();}
+        }finally{SearchCancellation.close(c);}
     }
     // Conservative robots handling. More restrictive matching rules win; an unavailable
     // robots file is not treated as permission. No login/challenge/redirect following.

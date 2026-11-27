@@ -61,9 +61,9 @@ final class MultiSearch {
         c.setRequestProperty("Accept","application/json");
         try(InputStream in=c.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
             byte[] b=new byte[8192];int n;
-            while((n=in.read(b))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedIOException();if(out.size()+n>12000000)throw new IOException("Yanıt çok büyük.");out.write(b,0,n);}
+            while((n=in.read(b))!=-1){SearchCancellation.check();if(out.size()+n>12000000)throw new IOException("Yanıt çok büyük.");out.write(b,0,n);}
             return new JSONObject(out.toString("UTF-8"));
-        }finally{c.disconnect();}
+        }finally{SearchCancellation.close(c);}
     }
     private static JSONArray arr(JSONObject o,String key){JSONArray a=o.optJSONArray(key);return a==null?new JSONArray():a;}
     static void apiRows(String id,JSONObject data,Map<String,JSONObject> rows,boolean clean) throws JSONException {
@@ -313,11 +313,15 @@ final class MultiSearch {
         Map<String,Map<String,JSONObject>> byId=new LinkedHashMap<>();
         JSONObject status=new JSONObject();JSONArray next=new JSONArray();
         JSONObject cursors=req.optJSONObject("cursors"),nextCursors=new JSONObject();
+        final SearchCancellation cancellation=SearchCancellation.current();
         try{
             for(String id:ids){
                 JSONObject state=cursors==null?null:cursors.optJSONObject(id);
                 final int position=state==null?page:Math.max(0,Math.min(1000,state.optInt("page",page)));
                 pending.put(completion.submit(()->{
+                if(cancellation!=null)cancellation.enter();
+                try{
+                SearchCancellation.check();
                 Map<String,JSONObject> rows=provider(id,q,position,clean,credentials,pinterestOnly);
                 if(!Relevance.useful(q,rows)&&!Thread.currentThread().isInterrupted()&&Arrays.asList("bing","google","yandex").contains(id)){
                     try{
@@ -325,10 +329,12 @@ final class MultiSearch {
                         if(Relevance.useful(q,alternate)||rows.isEmpty())rows=alternate;
                     }catch(Exception ignored){}
                 }
-                return rows;
+                SearchCancellation.check();return rows;
+                }finally{if(cancellation!=null)cancellation.leave();}
             }),id);}
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(65);
             while(!pending.isEmpty()){
+                SearchCancellation.check();
                 long left=deadline-System.nanoTime();if(left<=0)break;
                 Future<Map<String,JSONObject>> f=completion.poll(left,TimeUnit.NANOSECONDS);if(f==null)break;
                 String id=pending.remove(f);

@@ -16,9 +16,11 @@ public final class MainActivity extends Activity {
     private static final String PAGE="https://gallery.invalid/index.html";
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final Map<String,String[]> known=new HashMap<>();
+    private final ConcurrentHashMap<Integer,SearchCancellation> searches=new ConcurrentHashMap<>();
     private WebView view;
     private VisualAI visual;
     private final Set<Long> visualHashes=new LinkedHashSet<>();
+    private int lastSearchSession=-1;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -55,11 +57,17 @@ public final class MainActivity extends Activity {
             runOnUiThread(()->{if(!isDestroyed() && PAGE.equals(view.getUrl()))
                 startActivity(new Intent(MainActivity.this,UpdateSettings.class));});
         }
+        @JavascriptInterface public void cancelSearch(int id){
+            SearchCancellation token=searches.get(id);if(token!=null)token.cancel();
+        }
         @JavascriptInterface public void request(int id,String action,String data){
             if(worker.isShutdown()) return;
-            worker.execute(()->{
+            final SearchCancellation token=action.equals("search")?new SearchCancellation():null;
+            if(token!=null)searches.put(id,token);
+            try{worker.execute(()->{
                 JSONObject answer;
                 try {
+                    if(token!=null)token.enter();
                     JSONObject req=new JSONObject(data);
                     if(action.equals("modelStatus")){
                         answer=new JSONObject().put("installed",visual.installed());
@@ -67,8 +75,11 @@ public final class MainActivity extends Activity {
                         visual.install(message->progress(id,new JSONObjectUnchecked(message).value));
                         answer=new JSONObject().put("installed",visual.installed());
                     } else if(action.equals("search")){
-                        if(req.optInt("page",0)==0){known.clear();visualHashes.clear();}
+                        int session=req.optInt("session",-1);
+                        if(session>=0?session!=lastSearchSession:req.optInt("page",0)==0){known.clear();visualHashes.clear();lastSearchSession=session;}
+                        SearchCancellation.check();
                         answer=req.has("providers")?MultiSearch.run(req):Search.run(req);
+                        SearchCancellation.check();
                         if(req.has("providers")){
                             String mode=req.optString("precision","strict");
                             boolean useAI=req.optBoolean("ai",true);
@@ -79,14 +90,16 @@ public final class MainActivity extends Activity {
                             try{
                                 ranked=visual.rank(raw,req.getString("q"),mode,useAI,duplicate,visualHashes,
                                     message->progress(id,new JSONObjectUnchecked(message).value),
-                                    batch->{try{register(batch,req);progress(id,new JSONObject().put("rows",batch));}catch(Exception ignored){}});
+                                    batch->{try{SearchCancellation.check();register(batch,req);progress(id,new JSONObject().put("rows",batch));}catch(Exception ignored){}});
                             }catch(Exception|LinkageError err){
+                                SearchCancellation.check();
                                 answer.put("notice","AI çalışmadı; metin filtresi kullanıldı.");
                                 ranked=new JSONArray();
                                 for(int i=0;i<raw.length();i++){JSONObject row=raw.getJSONObject(i);if(Relevance.admit(req.getString("q"),row,mode,null)){row.put("relevance",Relevance.score(req.getString("q"),row));ranked.put(row);}}
                             }
                             answer.put("rows",ranked);
                         }
+                        SearchCancellation.check();
                         register(answer.getJSONArray("rows"),req);
                     } else if(action.equals("save")){
                         String[] item=known.get(req.getString("id"));
@@ -103,11 +116,18 @@ public final class MainActivity extends Activity {
                     } else throw new IOException("Geçersiz işlem.");
                 } catch(Exception|LinkageError e){
                     answer=new JSONObject();
-                    try {answer.put("error",Search.safeError(e instanceof Exception?(Exception)e:new IOException("AI çalışma zamanı yüklenemedi.")));} catch(JSONException ignored){}
+                    try {if(token!=null&&token.isCancelled())answer.put("cancelled",true);
+                        else answer.put("error",Search.safeError(e instanceof Exception?(Exception)e:new IOException("AI çalışma zamanı yüklenemedi.")));} catch(JSONException ignored){}
+                } finally {
+                    if(token!=null){token.leave();Thread.interrupted();}
+                }
+                if(token!=null){
+                    searches.remove(id,token);
+                    if(token.isCancelled()){answer=new JSONObject();try{answer.put("cancelled",true);}catch(JSONException ignored){}}
                 }
                 String callback="window.galleryReply("+id+","+JSONObject.quote(answer.toString())+")";
                 runOnUiThread(()->{if(!isDestroyed())view.evaluateJavascript(callback,null);});
-            });
+            });}catch(RejectedExecutionException e){if(token!=null)searches.remove(id,token);}
         }
     }
     private static final class JSONObjectUnchecked {
@@ -115,6 +135,7 @@ public final class MainActivity extends Activity {
         JSONObjectUnchecked(String message){try{value.put("message",message);}catch(JSONException ignored){}}
     }
     private void progress(int id,JSONObject data){
+        SearchCancellation token=searches.get(id);if(token!=null&&token.isCancelled())return;
         String callback="window.galleryProgress("+id+","+JSONObject.quote(data.toString())+")";
         runOnUiThread(()->{if(!isDestroyed())view.evaluateJavascript(callback,null);});
     }
@@ -184,6 +205,7 @@ public final class MainActivity extends Activity {
         view.evaluateJavascript("(function(){const d=document.querySelector('dialog[open]');if(d){d.close();return true}return false})()",v->{if(!"true".equals(v))finish();});
     }
     @Override protected void onDestroy(){
+        for(SearchCancellation token:searches.values())token.cancel();
         try{worker.execute(()->visual.close());}catch(Exception ignored){}worker.shutdown();view.removeJavascriptInterface("Gallery");view.destroy();super.onDestroy();
     }
 }
