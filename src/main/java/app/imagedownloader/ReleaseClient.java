@@ -17,20 +17,26 @@ final class ReleaseClient {
     private static final String API="https://api.github.com/repos/topgun1111/Image-Downloader/releases";
     private static final Pattern TAG=Pattern.compile("v[0-9]+\\.[0-9]+\\.([0-9]+)-[0-9a-f]{8,40}");
     private static final int MAX_APK=128*1024*1024;
-    private static final String DOWNLOAD="https://github.com/topgun1111/Image-Downloader/releases/download/";
+    static final String DOWNLOAD="https://github.com/topgun1111/Image-Downloader/releases/download/";
     ReleaseClient(){}
 
+    static final class Patch {
+        final long size;
+        final String digest,url,base;
+        Patch(long size,String digest,String url,String base){this.size=size;this.digest=digest;this.url=url;this.base=base;}
+    }
     static final class Release {
         final int code;
         final long size;
         final String name,digest,downloadUrl;
+        final JSONArray assets;
         Release(JSONObject json) throws Exception {
             String tag=json.getString("tag_name");
             Matcher m=TAG.matcher(tag);
             if(!m.matches()||json.optBoolean("draft")||json.optBoolean("prerelease"))
                 throw new IOException("Güncellenebilir bir kararlı sürüm bulunamadı.");
             name=tag.substring(1); code=Integer.parseInt(m.group(1));
-            JSONArray assets=json.getJSONArray("assets");
+            assets=json.getJSONArray("assets");
             JSONObject apk=null;
             for(int i=0;i<assets.length();i++){
                 JSONObject a=assets.getJSONObject(i);
@@ -41,6 +47,19 @@ final class ReleaseClient {
             downloadUrl=DOWNLOAD+tag+"/Image-Downloader.apk";
             if(!downloadUrl.equals(apk.optString("browser_download_url"))||size<=0||size>MAX_APK||!digest.matches("sha256:[a-fA-F0-9]{64}"))
                 throw new IOException("Yayınlanan APK bilgileri doğrulanamadı.");
+        }
+        Patch patchFor(String baseDigest){
+            if(baseDigest==null||!baseDigest.matches("sha256:[a-f0-9]{64}"))return null;
+            String filename="delta-"+baseDigest.substring(7)+".idpatch";
+            String url=DOWNLOAD+"v"+name+"/"+filename;
+            for(int i=0;i<assets.length();i++){
+                JSONObject a=assets.optJSONObject(i);if(a==null)continue;
+                long bytes=a.optLong("size",0);String hash=a.optString("digest");
+                if(filename.equals(a.optString("name"))&&"uploaded".equals(a.optString("state"))
+                    &&url.equals(a.optString("browser_download_url"))&&bytes>0&&bytes<size*0.8
+                    &&hash.matches("sha256:[a-fA-F0-9]{64}"))return new Patch(bytes,hash,url,baseDigest);
+            }
+            return null;
         }
     }
     private HttpURLConnection connect(String address,boolean binary) throws IOException {

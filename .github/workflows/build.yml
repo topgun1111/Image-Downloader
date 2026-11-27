@@ -74,13 +74,44 @@ jobs:
           test -n "$current_cert" && test "$current_cert" = "$(cert "$old")"
           old_code=$("$tools/aapt" dump badging "$old" | awk -F"'" '/^package:/{print $4}')
           test "$COUNT" -gt "$old_code"
+      - name: Generate and verify delta patches from the last ten releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/deltas" "$RUNNER_TEMP/delta-base" "$RUNNER_TEMP/delta-java"
+          javac -d "$RUNNER_TEMP/delta-java" src/main/java/app/imagedownloader/ApkDelta.java
+          size=$(stat -c%s Image-Downloader.apk)
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -r --arg current "v$VERSION" '[.[][] | select(.draft==false and .prerelease==false and .tag_name!=$current and (.tag_name|test("^v[0-9]+[.][0-9]+[.][0-9]+-[0-9a-f]{8,40}$")) and any(.assets[]?; .name=="Image-Downloader.apk" and .state=="uploaded"))] | sort_by(.tag_name|split("-")[0]|split(".")[-1]|tonumber) | reverse | .[:10][] | .tag_name' > "$RUNNER_TEMP/delta-tags"
+          while IFS= read -r tag; do
+            base="$RUNNER_TEMP/delta-base/Image-Downloader.apk"
+            rm -f "$base"
+            if ! gh release download "$tag" -p Image-Downloader.apk -D "$RUNNER_TEMP/delta-base"; then
+              echo "::warning::Cannot fetch delta base $tag"; continue
+            fi
+            if ! "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$base"; then
+              echo "::warning::Invalid base $tag"; continue
+            fi
+            patch=$(python3 ci/apk-delta.py "$base" Image-Downloader.apk "$RUNNER_TEMP/deltas")
+            if [[ -n "$patch" ]]; then
+              java -cp "$RUNNER_TEMP/delta-java" app.imagedownloader.ApkDelta "$base" "$patch" "$RUNNER_TEMP/reconstructed.apk" "$size"
+              cmp Image-Downloader.apk "$RUNNER_TEMP/reconstructed.apk"
+              "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify "$RUNNER_TEMP/reconstructed.apk"
+              echo "$tag: $(stat -c%s "$patch") / $size bytes"
+              rm -f "$RUNNER_TEMP/reconstructed.apk"
+            else
+              echo "$tag: no useful patch"
+            fi
+          done < "$RUNNER_TEMP/delta-tags"
       - name: Publish to Releases and verify download
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="v$VERSION"
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" Image-Downloader.apk --target "$GITHUB_SHA" --title "Image Downloader $VERSION" --notes "Commit $GITHUB_SHA" --latest
+            shopt -s nullglob
+            patches=("$RUNNER_TEMP/deltas/"*.idpatch)
+            gh release create "$tag" Image-Downloader.apk "${patches[@]}" --target "$GITHUB_SHA" --title "Image Downloader $VERSION" --notes "Commit $GITHUB_SHA · Wi-Fi full APK / mobile delta updates" --latest
           fi
           info=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag")
           asset=$(jq -er '.assets[] | select(.name=="Image-Downloader.apk") | .id' <<< "$info")
