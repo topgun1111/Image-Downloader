@@ -164,21 +164,20 @@ function card(item){
  img.onload=loaded;
  // Set src after the card and its metadata have been created.
  a.querySelector('.photo').onclick=()=>show(item);a.querySelector('p').textContent=item.title;
- const info=document.createElement('p');info.textContent=sources(item)+(item.width&&item.height?' · '+item.width+'×'+item.height:'');info.title=info.textContent;a.querySelector('footer').before(info);const relevance=document.createElement('p');relevance.textContent=(item.discovery?'Derin keşif · ':'')+(item.preliminary?'Ön sonuç · AI kontrolü bekleniyor':item.aiChecked?'AI + metin eşleşmesi':'Metin eşleşmesi');relevance.style.color='#365477';a.querySelector('footer').before(relevance);
+ const info=document.createElement('p');info.textContent=sources(item)+(item.width&&item.height?' · '+item.width+'×'+item.height:'');info.title=info.textContent;a.querySelector('footer').before(info);const relevance=document.createElement('p');relevance.textContent=(item.discovery?'Derin keşif · ':'')+(item.preliminary?'Ön sonuç · doğrulama bekleniyor':item.aiChecked?'AI + metin eşleşmesi':'Metin eşleşmesi');relevance.style.color='#365477';a.querySelector('footer').before(relevance);
  if(item.creatorUrl){const author=document.createElement('a');author.href=item.creatorUrl;author.textContent=(item.creator||'Fotoğrafçı')+' · Unsplash';author.style.cssText='display:block;font-size:12px;padding:0 9px 7px';a.querySelector('footer').before(author);}if(item.pageUrl){const link=document.createElement('a');link.href=item.pageUrl;link.textContent='Kaynak';link.rel='noopener noreferrer';link.style.cssText='display:block;font-size:12px;padding:0 9px 7px';a.querySelector('footer').before(link);}
  const check=a.querySelector('input'),save=a.querySelector('footer button');
  check.onchange=()=>{if(check.checked)selected.add(item.id);else selected.delete(item.id);refresh();};
  save.onclick=()=>downloads([item.id]);cards.set(item.id,{item,check,save,node:a,relevance,info,img,order:order++});el('grid').append(a);if(imageWatcher)imageWatcher.observe(img);else state.resume();
 }
 async function downloads(ids){
- if(downloading)return;downloading=true;refresh();el('errors').textContent='';let saved=0;
- for(const [i,id] of ids.entries()){
-  const entry=cards.get(id);if(!entry)continue;
-  el('message').textContent='İndiriliyor · '+(i+1)+' / '+ids.length;
+ if(downloading)return;const entries=ids.map(id=>[id,cards.get(id)]).filter(([,entry])=>entry);if(!entries.length)return;downloading=true;refresh();el('errors').textContent='';let saved=0;
+ for(const [i,[id,entry]] of entries.entries()){
+  el('message').textContent='İndiriliyor · '+(i+1)+' / '+entries.length;
   try{const result=await api('save',{id});saved++;selected.delete(id);entry.save.textContent=result.fallback?'Alternatif':'İndirildi';}
   catch(e){el('errors').textContent+=entry.item.title+' — '+e.message+'\n';}
  }
- el('message').textContent=saved+' / '+ids.length+' görsel kaydedildi · Download/Google';downloading=false;refresh();scheduleAuto();
+ el('message').textContent=saved+' / '+entries.length+' görsel kaydedildi · Download/Google';downloading=false;refresh();scheduleAuto();
 }
 el('form').onsubmit=async e=>{
  e.preventDefault();if(busy||downloading||!el('query').value.trim())return;busy=true;refresh();
@@ -198,7 +197,7 @@ async function loadPage(){
  if(busy||!searchState)return;
  busy=true;searching=true;stopped=false;stopRequested=false;refresh();el('errors').textContent='';
  try {
-  const before=cards.size,firstOrder=order,provisional=new Set();
+  const before=cards.size,firstOrder=order,provisional=new Set([...cards].filter(([,c])=>c.item.preliminary).map(([id])=>id));
   function ingest(item){
    const c=cards.get(item.id);
    if(!c){card(item);if(item.preliminary)provisional.add(item.id);return;}

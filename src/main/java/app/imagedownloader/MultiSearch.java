@@ -360,6 +360,7 @@ final class MultiSearch {
                 String cacheKey=new JSONArray().put(id).put(q).put(position).put(clean).put(pinterestOnly)
                     .put(credentials.optString("serpapi")).put(credentials.optString("pexels"))
                     .put(credentials.optString("pixabay")).put(credentials.optString("unsplash")).toString();
+                cacheKey=java.util.UUID.nameUUIDFromBytes(cacheKey.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
                 Map<String,JSONObject> previous=cached(cacheKey);if(previous!=null)return previous;
                 long started=System.nanoTime();
                 Map<String,JSONObject> rows=provider(id,q,position,clean,credentials,pinterestOnly);

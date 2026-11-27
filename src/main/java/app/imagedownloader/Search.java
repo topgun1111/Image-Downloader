@@ -12,6 +12,18 @@ final class Search {
     private static final String UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36";
     static final String WIKI_UA="ImageDownloaderAndroid/1.2 (https://github.com/topgun1111/Image-Downloader)";
     private static final Pattern GOOGLE_PAIR = Pattern.compile("\\[\\s*(\"https?[^\"]+\")\\s*,\\s*\\d+\\s*,\\s*\\d+\\s*\\]\\s*,\\s*\\[\\s*(\"https?[^\"]+\")\\s*,\\s*\\d+\\s*,\\s*\\d+");
+    // Only provider responses recorded here, not individual gallery/AI images.
+    private static final Map<String,Long> hostLatency=new LinkedHashMap<String,Long>(32,.75f,true){
+        @Override protected boolean removeEldestEntry(Map.Entry<String,Long> e){return size()>64;}
+    };
+    static synchronized int searchTimeout(String host,boolean connect){
+        Long ms=hostLatency.get(host);
+        if(ms==null)return connect?5000:8000;
+        return (int)(connect?Math.max(3500,Math.min(8000,ms*2+1500)):Math.max(5000,Math.min(12000,ms*3+2000)));
+    }
+    private static synchronized void recordLatency(String host,long elapsed){
+        Long old=hostLatency.get(host);hostLatency.put(host,old==null?elapsed:(old*3+elapsed)/4);
+    }
     static boolean web(String url) {
         try {
             URL u = new URL(url);
@@ -28,11 +40,12 @@ final class Search {
         c.setRequestProperty("Accept-Language","tr-TR,tr;q=0.9");
         // Only search requests use the shorter initial network budget; downloads keep their existing timeout.
         boolean searching=SearchCancellation.current()!=null;
-        c.setConnectTimeout(searching?5000:8000); c.setReadTimeout(searching?8000:12000);
+        c.setConnectTimeout(searching?searchTimeout(h,true):8000); c.setReadTimeout(searching?searchTimeout(h,false):12000);
         SearchCancellation.track(c);
         return c;
     }
     static String read(String url) throws IOException {
+        long started=System.nanoTime();
         HttpURLConnection c = open(url);
         try (InputStream in=c.getInputStream(); ByteArrayOutputStream out=new ByteArrayOutputStream()) {
             byte[] b=new byte[16384]; int n;
@@ -41,6 +54,7 @@ final class Search {
                 if (out.size()+n>12000000) throw new IOException("Arama yanıtı çok büyük.");
                 out.write(b,0,n);
             }
+            if(SearchCancellation.current()!=null)recordLatency(host(url),Math.max(1,java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started)));
             return out.toString("UTF-8");
         } finally { SearchCancellation.close(c); }
     }
