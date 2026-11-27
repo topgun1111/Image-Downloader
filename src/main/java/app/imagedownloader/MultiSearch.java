@@ -92,6 +92,7 @@ final class MultiSearch {
             }
             add(rows,id,url,thumb,title,page,w,h,clean);
             JSONObject row=rows.get(original(url));
+            if(row!=null){row.put("description",o.optString("description")).put("tags",o.optString("tags"));}
             if(row!=null&&id.equals("openverse"))row.put("license",o.optString("license")).put("creator",o.optString("creator"));
             if(row!=null&&id.equals("pexels"))row.put("creator",o.optString("photographer"));
         }
@@ -138,7 +139,8 @@ final class MultiSearch {
             Element anchor=e.closest("a[href]");
             String landing=anchor==null?"":anchor.absUrl("href");
             if(!cdn(id,best))continue;
-            add(rows,id,best,thumb,e.attr("alt"),landing,w,h,clean);
+            String title=Search.first(e.attr("alt"),e.attr("title"),anchor==null?"":anchor.attr("aria-label"));
+            add(rows,id,best,thumb,title,landing,w,h,clean);
         }
     }
     private static int number(String n){try{return Integer.parseInt(n);}catch(Exception e){return 0;}}
@@ -179,6 +181,7 @@ final class MultiSearch {
             if(restrict&&!(id.equals("pinterest")?(Search.pinterestHost(u)||Search.pinterestSource(page)):
                 domain!=null&&(onDomain(page,domain)||onDomain(u,domain)||cdn(id,u))))continue;
             add(to,id,u,o.optString("thumb"),o.optString("title"),page,o.optInt("width"),o.optInt("height"),clean);
+            JSONObject added=to.get(original(u));if(added!=null)for(String key:new String[]{"description","tags","license","creator","creatorUrl","tracking"})if(!o.optString(key).isEmpty())added.put(key,o.optString(key));
         }
     }
     private static void indexed(String id,String q,int page,boolean clean,Map<String,JSONObject> rows)throws Exception{
@@ -193,7 +196,7 @@ final class MultiSearch {
                 if(Search.blocked(html))continue;
                 Search.parse(engine,html,tmp,id.equals("pinterest"));
                 copy(id,tmp,rows,clean,true);
-                if(!rows.isEmpty())return;
+                if(Relevance.useful(q,rows))return;
             }catch(Exception ignored){}
         }
     }
@@ -264,7 +267,14 @@ final class MultiSearch {
                 }
             }catch(Exception ignored){}
         }
-        if(out.isEmpty())indexed(id,q,page,clean,out);
+        if(!Relevance.useful(q,out)){
+            Map<String,JSONObject> better=new LinkedHashMap<>();indexed(id,Relevance.expanded(q),page,clean,better);
+            if(!better.isEmpty()){
+                Map<String,JSONObject> combined=new LinkedHashMap<>(better);
+                for(Map.Entry<String,JSONObject> entry:out.entrySet())if(combined.size()<LIMIT)combined.putIfAbsent(entry.getKey(),entry.getValue());
+                out=combined;
+            }
+        }
         return out;
     }
     static JSONObject run(JSONObject req)throws Exception{
@@ -283,7 +293,16 @@ final class MultiSearch {
         Map<String,Map<String,JSONObject>> byId=new LinkedHashMap<>();
         JSONObject status=new JSONObject();JSONArray next=new JSONArray();
         try{
-            for(String id:ids)pending.put(completion.submit(()->provider(id,q,page,clean,credentials,pinterestOnly)),id);
+            for(String id:ids)pending.put(completion.submit(()->{
+                Map<String,JSONObject> rows=provider(id,q,page,clean,credentials,pinterestOnly);
+                if(!Relevance.useful(q,rows)&&!Thread.currentThread().isInterrupted()&&Arrays.asList("bing","google","yandex").contains(id)){
+                    try{
+                        Map<String,JSONObject> alternate=provider(id,Relevance.expanded(q),page,clean,credentials,pinterestOnly);
+                        if(Relevance.useful(q,alternate)||rows.isEmpty())rows=alternate;
+                    }catch(Exception ignored){}
+                }
+                return rows;
+            }),id);
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(65);
             while(!pending.isEmpty()){
                 long left=deadline-System.nanoTime();if(left<=0)break;

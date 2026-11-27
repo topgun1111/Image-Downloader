@@ -16,6 +16,13 @@ dialog{max-width:min(94vw,850px);border:0;border-radius:14px;padding:12px}dialog
 <div class="tools"><button id="filterButton" type="button">Filtre · Tümü</button><button id="sortButton" type="button">Sırala · Önerilen</button></div><label for="engine" hidden>Arama motoru</label>
 <form id="form"><input id="query" type="search" placeholder="Tüm kaynaklarda görsel ara" aria-label="Arama" maxlength="256" required><button id="go">Ara</button></form>
 <dialog id="filters"><header><strong>Arama filtreleri</strong><button id="closeFilters" type="button">Tamam</button></header>
+<h3>Akıllı arama</h3>
+<label for="precision">Arama hassasiyeti</label><select id="precision" style="width:100%;font:inherit;padding:10px"><option value="fast">Hızlı · metin filtresi</option><option value="balanced">Dengeli</option><option value="strict" selected>Sıkı · önerilen</option><option value="ultra">Çok sıkı</option></select>
+<label><input type="checkbox" id="ai" checked>MobileCLIP görsel AI</label>
+<label><input type="checkbox" id="duplicates" checked>Benzer görselleri ele</label>
+<p id="modelStatus" role="status">Model durumu kontrol ediliyor…</p>
+<button id="installModel" type="button">AI modelini indir (~57 MB)</button>
+<p style="font-size:13px">İlk indirmeden sonra analiz cihazda yapılır. Kişi adlarında kaynak bilgisi şarttır. AI kurulmazsa metin filtresi kullanılır.</p>
 <p>Aranacak kaynakları seçin.</p><div class="tools"><button id="selectSources" type="button">Tümünü seç</button><button id="clearSources" type="button">Temizle</button></div>
 <div id="providers" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 12px"></div>
 <label><input type="checkbox" id="clean" checked>Yer tutucuları, ikonları ve çok küçük görselleri ele</label>
@@ -25,7 +32,7 @@ dialog{max-width:min(94vw,850px);border:0;border-radius:14px;padding:12px}dialog
 <label for="pexelsKey">Pexels</label><input id="pexelsKey" type="password" autocomplete="off">
 <label for="pixabayKey">Pixabay</label><input id="pixabayKey" type="password" autocomplete="off"><label for="unsplashKey">Unsplash Access Key</label><input id="unsplashKey" type="password" autocomplete="off"></details></dialog>
 <dialog id="sortDialog"><header><strong>Sonuçları sırala</strong><button id="closeSort" type="button">Tamam</button></header>
-<select id="sort" style="width:100%;font:inherit;padding:12px"><option value="rank">Önerilen (kaynaklar karışık)</option><option value="large">En yüksek çözünürlük</option><option value="small">En düşük çözünürlük</option><option value="name">Başlık A–Z</option><option value="source">Kaynağa göre</option></select>
+<select id="sort" style="width:100%;font:inherit;padding:12px"><option value="rank">En ilgili sonuçlar</option><option value="large">En yüksek çözünürlük</option><option value="small">En düşük çözünürlük</option><option value="name">Başlık A–Z</option><option value="source">Kaynağa göre</option></select>
 <p>Boyutu bilinmeyen görseller sona alınır.</p></dialog>
 <details id="sourceDetails" hidden><summary>Kaynak durumları</summary><p id="sourceStatus"></p></details>
 <div class="tools" id="tools" hidden><button id="all">Tümünü seç</button><button id="batch">Seçilenleri indir</button></div>
@@ -51,7 +58,7 @@ function sortCards(){
   if(mode==='large'||mode==='small'){const x=area(a),y=area(b);if(!x||!y)return x? -1:y?1:a.order-b.order;return (mode==='large'?y-x:x-y)||a.order-b.order;}
   if(mode==='name')return a.item.title.localeCompare(b.item.title,'tr')||a.order-b.order;
   if(mode==='source')return sources(a.item).localeCompare(sources(b.item),'tr')||a.order-b.order;
-  return a.order-b.order;
+  return (b.item.relevance||0)-(a.item.relevance||0)||a.order-b.order;
  });
  for(const c of rows)el('grid').append(c.node);
 }
@@ -64,19 +71,33 @@ el('closeSort').onclick=()=>el('sortDialog').close();
 el('sort').onchange=()=>{el('sortButton').textContent='Sırala · '+el('sort').selectedOptions[0].textContent;sortCards();};
 filterLabel();
 const pending=new Map();
-function api(action,data){
+function api(action,data,onProgress){
  return new Promise((resolve,reject)=>{
-  const id=++sequence;pending.set(id,{resolve,reject});
+  const id=++sequence;pending.set(id,{resolve,reject,onProgress});
   Gallery.request(id,action,JSON.stringify(data));
  });
 }
+window.galleryProgress=(id,json)=>{
+ const task=pending.get(id);if(task&&task.onProgress)task.onProgress(JSON.parse(json));
+};
 window.galleryReply=(id,json)=>{
  const task=pending.get(id);if(!task)return;pending.delete(id);
  const result=JSON.parse(json);
  if(result.error)task.reject(new Error(result.error));else task.resolve(result);
 };
+async function modelStatus(){
+ try{const s=await api('modelStatus',{});el('modelStatus').textContent=s.installed?'MobileCLIP modeli hazır':'AI modeli henüz kurulmadı';el('installModel').hidden=s.installed;}
+ catch(e){el('modelStatus').textContent=e.message;}
+}
+el('installModel').onclick=async()=>{
+ if(busy)return;busy=true;refresh();el('closeFilters').disabled=true;
+ el('modelStatus').textContent='AI modeli indiriliyor…';
+ try{await api('installModel',{},x=>{if(x.message)el('modelStatus').textContent=x.message;});await modelStatus();}
+ catch(e){el('modelStatus').textContent='AI kurulamadı: '+e.message;}
+ finally{busy=false;el('closeFilters').disabled=false;refresh();}
+};
 function refresh(){
- el('more').hidden=!hasMore;el('more').disabled=busy;el('filterButton').disabled=busy;el('pinterest').disabled=busy;el('tools').hidden=!cards.size;el('go').disabled=busy;
+ el('installModel').disabled=busy;el('more').hidden=!hasMore;el('more').disabled=busy;el('filterButton').disabled=busy;el('pinterest').disabled=busy;el('tools').hidden=!cards.size;el('go').disabled=busy;
  el('batch').disabled=busy||!selected.size;el('all').disabled=busy;
  el('all').textContent=selected.size===cards.size?'Seçimi kaldır':'Tümünü seç';
  el('batch').textContent='Seçilenleri indir ('+selected.size+')';
@@ -102,7 +123,7 @@ function card(item){
  };
  // Set src after the card and its metadata have been created.
  a.querySelector('.photo').onclick=()=>show(item);a.querySelector('p').textContent=item.title;
- const info=document.createElement('p');info.textContent=sources(item)+(item.width&&item.height?' · '+item.width+'×'+item.height:'');info.title=info.textContent;a.querySelector('footer').before(info);
+ const info=document.createElement('p');info.textContent=sources(item)+(item.width&&item.height?' · '+item.width+'×'+item.height:'');info.title=info.textContent;a.querySelector('footer').before(info);const relevance=document.createElement('p');relevance.textContent=item.aiChecked?'AI + metin eşleşmesi':'Metin eşleşmesi';relevance.style.color='#365477';a.querySelector('footer').before(relevance);
  if(item.creatorUrl){const author=document.createElement('a');author.href=item.creatorUrl;author.textContent=(item.creator||'Fotoğrafçı')+' · Unsplash';author.style.cssText='display:block;font-size:12px;padding:0 9px 7px';a.querySelector('footer').before(author);}if(item.pageUrl){const link=document.createElement('a');link.href=item.pageUrl;link.textContent='Kaynak';link.rel='noopener noreferrer';link.style.cssText='display:block;font-size:12px;padding:0 9px 7px';a.querySelector('footer').before(link);}
  const check=a.querySelector('input'),save=a.querySelector('footer button');
  check.onchange=()=>{if(check.checked)selected.add(item.id);else selected.delete(item.id);refresh();};
@@ -126,16 +147,19 @@ el('form').onsubmit=async e=>{
  el('message').textContent=selectedProviders.length+' kaynak paralel aranıyor…';el('errors').textContent='';
  el('sourceDetails').hidden=true;
  cards.clear();selected.clear();order=0;el('grid').replaceChildren();refresh();
- searchState={q,providers:selectedProviders,pinterest,clean:el('clean').checked,keys:{serpapi:el('apiKey').value.trim(),pexels:el('pexelsKey').value.trim(),pixabay:el('pixabayKey').value.trim(),unsplash:el('unsplashKey').value.trim()}};
+ searchState={q,providers:selectedProviders,pinterest,clean:el('clean').checked,precision:el('precision').value,ai:el('ai').checked,duplicates:el('duplicates').checked,keys:{serpapi:el('apiKey').value.trim(),pexels:el('pexelsKey').value.trim(),pixabay:el('pixabayKey').value.trim(),unsplash:el('unsplashKey').value.trim()}};
  nextPage=0;hasMore=false;await loadPage();
 };
 async function loadPage(){
  busy=true;refresh();el('errors').textContent='';
  try {
-  const result=await api('search',{...searchState,page:nextPage});
   const before=cards.size;
+  const result=await api('search',{...searchState,page:nextPage},partial=>{
+   if(partial.message)el('message').textContent=partial.message;
+   if(partial.rows){for(const item of partial.rows)if(!cards.has(item.id))card(item);sortCards();refresh();el('message').textContent=cards.size+' eşleşen görsel · arama devam ediyor…';}
+  });
   for(const item of result.rows)if(!cards.has(item.id))card(item);
-  hasMore=result.more&&cards.size>before;nextPage++;
+  hasMore=result.more&&nextPage<1000;nextPage++;
   if(result.nextProviders)searchState.providers=result.nextProviders;
   if(result.status){el('sourceDetails').hidden=false;el('sourceStatus').textContent=Object.entries(result.status).map(([id,count])=>(providers[id]||id)+': '+(count<0?'erişilemedi / zaman aşımı':count===0?'sonuç yok / engelli':count+' görsel')).join(' · ');}
   sortCards();
@@ -149,5 +173,5 @@ el('all').onclick=()=>{if(selected.size===cards.size)selected.clear();else for(c
 el('batch').onclick=()=>downloads([...selected]);
 el('closePreview').onclick=()=>el('preview').close();
 el('savePreview').onclick=()=>{el('preview').close();downloads([current.id]);};
-refresh();
+refresh();modelStatus();
 </script></html>

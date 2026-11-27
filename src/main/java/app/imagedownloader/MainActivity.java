@@ -17,9 +17,12 @@ public final class MainActivity extends Activity {
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final Map<String,String[]> known=new HashMap<>();
     private WebView view;
+    private VisualAI visual;
+    private final Set<Long> visualHashes=new LinkedHashSet<>();
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        visual=new VisualAI(this);
         view=new WebView(this);setContentView(view);
         view.setOnApplyWindowInsetsListener((v,insets)->{
             v.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),
@@ -57,14 +60,33 @@ public final class MainActivity extends Activity {
                 JSONObject answer;
                 try {
                     JSONObject req=new JSONObject(data);
-                    if(action.equals("search")){
+                    if(action.equals("modelStatus")){
+                        answer=new JSONObject().put("installed",visual.installed());
+                    } else if(action.equals("installModel")){
+                        visual.install(message->progress(id,new JSONObjectUnchecked(message).value));
+                        answer=new JSONObject().put("installed",visual.installed());
+                    } else if(action.equals("search")){
+                        if(req.optInt("page",0)==0){known.clear();visualHashes.clear();}
                         answer=req.has("providers")?MultiSearch.run(req):Search.run(req);
-                        if(req.optInt("page",0)==0) known.clear();
-                        JSONArray rows=answer.getJSONArray("rows");
-                        for(int i=0;i<rows.length();i++){
-                            JSONObject row=rows.getJSONObject(i);String url=row.getString("url");
-                            known.put(url,new String[]{url,req.getString("q"),row.optString("fallback"),String.valueOf(req.optBoolean("clean",true)),row.optString("tracking"),req.optJSONObject("keys")==null?"":req.optJSONObject("keys").optString("unsplash")});row.put("id",url);
+                        if(req.has("providers")){
+                            String mode=req.optString("precision","strict");
+                            boolean useAI=req.optBoolean("ai",true);
+                            boolean duplicate=req.optBoolean("duplicates",true);
+                            if(useAI&&!visual.installed()&&!mode.equals("fast"))answer.put("notice","AI modeli kurulmamış; metin filtresi kullanıldı.");
+                            JSONArray raw=answer.getJSONArray("rows");
+                            JSONArray ranked;
+                            try{
+                                ranked=visual.rank(raw,req.getString("q"),mode,useAI,duplicate,visualHashes,
+                                    message->progress(id,new JSONObjectUnchecked(message).value),
+                                    batch->{try{register(batch,req);progress(id,new JSONObject().put("rows",batch));}catch(Exception ignored){}});
+                            }catch(Exception|LinkageError err){
+                                answer.put("notice","AI çalışmadı; metin filtresi kullanıldı.");
+                                ranked=new JSONArray();
+                                for(int i=0;i<raw.length();i++){JSONObject row=raw.getJSONObject(i);if(Relevance.admit(req.getString("q"),row,mode,null)){row.put("relevance",Relevance.score(req.getString("q"),row));ranked.put(row);}}
+                            }
+                            answer.put("rows",ranked);
                         }
+                        register(answer.getJSONArray("rows"),req);
                     } else if(action.equals("save")){
                         String[] item=known.get(req.getString("id"));
                         if(item==null) throw new IOException("Aramayı yenileyin.");
@@ -78,13 +100,27 @@ public final class MainActivity extends Activity {
                         }
                         answer=new JSONObject().put("fallback",fallback);
                     } else throw new IOException("Geçersiz işlem.");
-                } catch(Exception e){
+                } catch(Exception|LinkageError e){
                     answer=new JSONObject();
-                    try {answer.put("error",Search.safeError(e));} catch(JSONException ignored){}
+                    try {answer.put("error",Search.safeError(e instanceof Exception?(Exception)e:new IOException("AI çalışma zamanı yüklenemedi.")));} catch(JSONException ignored){}
                 }
                 String callback="window.galleryReply("+id+","+JSONObject.quote(answer.toString())+")";
                 runOnUiThread(()->{if(!isDestroyed())view.evaluateJavascript(callback,null);});
             });
+        }
+    }
+    private static final class JSONObjectUnchecked {
+        final JSONObject value=new JSONObject();
+        JSONObjectUnchecked(String message){try{value.put("message",message);}catch(JSONException ignored){}}
+    }
+    private void progress(int id,JSONObject data){
+        String callback="window.galleryProgress("+id+","+JSONObject.quote(data.toString())+")";
+        runOnUiThread(()->{if(!isDestroyed())view.evaluateJavascript(callback,null);});
+    }
+    private void register(JSONArray rows,JSONObject req)throws JSONException{
+        for(int i=0;i<rows.length();i++){
+            JSONObject row=rows.getJSONObject(i);String url=row.getString("url");
+            known.put(url,new String[]{url,req.getString("q"),row.optString("fallback"),String.valueOf(req.optBoolean("clean",true)),row.optString("tracking"),req.optJSONObject("keys")==null?"":req.optJSONObject("keys").optString("unsplash")});row.put("id",url);
         }
     }
     private void save(String url,String query,boolean clean) throws Exception {
@@ -147,6 +183,6 @@ public final class MainActivity extends Activity {
         view.evaluateJavascript("(function(){const d=document.querySelector('dialog[open]');if(d){d.close();return true}return false})()",v->{if(!"true".equals(v))finish();});
     }
     @Override protected void onDestroy(){
-        worker.shutdownNow();view.removeJavascriptInterface("Gallery");view.destroy();super.onDestroy();
+        try{worker.execute(()->visual.close());}catch(Exception ignored){}worker.shutdown();view.removeJavascriptInterface("Gallery");view.destroy();super.onDestroy();
     }
 }
