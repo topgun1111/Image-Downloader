@@ -17,6 +17,10 @@ public class SearchLanguagesTest {
         assertTrue(SearchLanguages.countrySource(new JSONObject().put("pageUrl","https://www.fenerbahce.org/news"),"TR"));
         assertFalse(SearchLanguages.countrySource(new JSONObject().put("pageUrl","https://fenerbahce.org.example.com/news"),"TR"));
     }
+    @Test public void coloringWithoutModels(){
+        assertEquals("Toca Boca раскраски",SearchLanguages.translate("Toca Boca coloring pages","ru",true));
+        assertEquals("Toca Boca 塗り絵",SearchLanguages.translate("Toca Boca coloring pages","ja",true));
+    }
     @Test public void translatedMetadata()throws Exception{
         JSONObject row=new JSONObject().put("title","gato bonito").put("localizedQuery","gato bonito");
         assertTrue(Relevance.admit("cute cat",row,"strict",null));

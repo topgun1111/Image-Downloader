@@ -8,8 +8,8 @@ import com.google.mlkit.nl.translate.*;
 import com.google.mlkit.common.model.DownloadConditions;
 
 final class SearchLanguages {
-    static final String[] CODES="en tr es pt ru de fr it ja zh ko ar hi nl pl id vi th uk fa sv da fi no el cs ro hu he ms bn ta te ur bg hr sk sl sr lt lv et ca af sq be cy eo ga gl ht is ka mk mt sw tl".split(" ");
-    static final String[] COUNTRIES="US TR ES BR RU DE FR IT JP CN KR SA IN NL PL ID VN TH UA IR SE DK FI NO GR CZ RO HU IL MY BD IN IN PK BG HR SK SI RS LT LV EE ES ZA AL BY GB US IE ES HT IS GE MK MT KE PH".split(" ");
+    static final String[] CODES="en tr es pt ru de fr it ja zh ko ar hi nl pl id vi th uk fa sv da fi no el cs ro hu he ms bn ta te ur bg hr sk sl lt lv et ca af sq be cy eo ga gl ht is ka mk mt sw tl gu kn mr".split(" ");
+    static final String[] COUNTRIES="US TR ES BR RU DE FR IT JP CN KR SA IN NL PL ID VN TH UA IR SE DK FI NO GR CZ RO HU IL MY BD IN IN PK BG HR SK SI LT LV EE ES ZA AL BY GB US IE ES HT IS GE MK MT KE PH IN IN IN".split(" ");
     private static final ThreadLocal<String> ACTIVE=new ThreadLocal<>();
     private static final Map<String,String> cache=new LinkedHashMap<String,String>(32,.75f,true){
         @Override protected boolean removeEldestEntry(Map.Entry<String,String> e){return size()>256;}
@@ -59,7 +59,14 @@ final class SearchLanguages {
         String prefix="",body=query;
         java.util.regex.Matcher brand=java.util.regex.Pattern.compile("(?i)^(toca\\s+(?:boca|life)(?:\\s+world)?|tocaboca|disney|minecraft|roblox)\\b\\s*").matcher(query);
         if(brand.find()){prefix=brand.group(1);body=query.substring(brand.end()).trim();}
-        if(body.isEmpty()||Relevance.strictName(query)||turkey(query))return query;
+        if(body.isEmpty())return query;
+        if(Relevance.strictName(query)||turkey(query))return query;
+        // Common image-search descriptors work instantly even before offline models arrive.
+        String n=Relevance.norm(body);
+        if(!prefix.isEmpty()&&Arrays.asList("coloring pages","colouring pages","boyama sayfalari","boyama kagitlari","dibujos para colorear").contains(n)){
+            String value=coloring(target);
+            if(value!=null)return prefix+" "+value;
+        }
         LanguageIdentifier identifier=null;Translator translator=null;
         try{
             identifier=LanguageIdentification.getClient();
@@ -79,6 +86,17 @@ final class SearchLanguages {
         }catch(InterruptedException e){Thread.currentThread().interrupt();return query;}
         catch(Exception|LinkageError e){return query;}
         finally{if(identifier!=null)identifier.close();if(translator!=null)translator.close();}
+    }
+    static String coloring(String target){
+        switch(target){
+            case "en":return "coloring pages";case "tr":return "boyama sayfaları";
+            case "es":return "dibujos para colorear";case "pt":return "desenhos para colorir";
+            case "ru":return "раскраски";case "de":return "Ausmalbilder";case "fr":return "coloriages";
+            case "ja":return "塗り絵";case "zh":return "涂色画";case "ko":return "색칠공부";
+            case "it":return "disegni da colorare";case "ar":return "رسومات للتلوين";
+            case "id":return "gambar mewarnai";case "pl":return "kolorowanki";
+            default:return null;
+        }
     }
     static String googleParams(){return "&hl="+language()+"&gl="+country().toLowerCase(Locale.ROOT);}
     static String bingParams(){return "&mkt="+active()+"&setlang="+language()+"&cc="+country();}

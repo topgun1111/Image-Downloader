@@ -36,7 +36,7 @@ main{padding-bottom:150px}
 <label for="languageMode">Dil modu</label><select id="languageMode" style="width:100%;font:inherit;padding:10px"><option value="auto">Akıllı otomatik</option><option value="all">Tüm desteklenen diller</option><option value="selected">Seçilen diller</option><option value="local">Ülkeye özel</option></select>
 <div id="languageChoices" hidden><div class="tools"><button id="allLanguages" type="button">Tümünü seç</button><button id="clearLanguages" type="button">Temizle</button></div><div id="languageList" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 10px;max-height:260px;overflow:auto"></div></div>
 <div id="localChoices" hidden><label for="localCountry">Ülke</label><select id="localCountry" style="width:100%;font:inherit;padding:10px"></select><label for="localLanguage">Dil</label><select id="localLanguage" style="width:100%;font:inherit;padding:10px"></select></div>
-<label><input id="translationWifi" type="checkbox" checked>Çeviri modellerini yalnızca Wi-Fi ile indir</label><p style="font-size:13px">Diller kaydırdıkça sırayla aranır. Model hazır değilse özgün sorgu kullanılır. Ülkeye özel mod yalnızca tanınabilen ülke kaynaklarını gösterir.</p>
+<label><input id="translationWifi" type="checkbox" checked>Çeviri modellerini yalnızca Wi-Fi ile indir</label><p style="font-size:13px">Diller kaydırdıkça sırayla aranır. Çeviri: Google ML Kit (Google Translate). Model hazır değilse özgün sorgu kullanılır. Ülkeye özel mod yalnızca tanınabilen ülke kaynaklarını gösterir.</p>
 <h3>Akıllı arama</h3>
 <label for="precision">Arama hassasiyeti</label><select id="precision" style="width:100%;font:inherit;padding:10px"><option value="fast">Hızlı · metin filtresi</option><option value="balanced">Dengeli</option><option value="strict" selected>Sıkı · önerilen</option><option value="ultra">Çok sıkı</option></select>
 <label><input type="checkbox" id="ai" checked>MobileCLIP görsel AI</label>
@@ -86,8 +86,8 @@ for(const [id,name] of Object.entries(providers)){
  check.type='checkbox';check.checked=true;check.value=id;label.append(check,document.createTextNode(name));el('providers').append(label);
  check.onchange=filterLabel;
 }
-const languageCodes='en tr es pt ru de fr it ja zh ko ar hi nl pl id vi th uk fa sv da fi no el cs ro hu he ms bn ta te ur bg hr sk sl sr lt lv et ca af sq be cy eo ga gl ht is ka mk mt sw tl'.split(' ');
-const languageCountries='US TR ES BR RU DE FR IT JP CN KR SA IN NL PL ID VN TH UA IR SE DK FI NO GR CZ RO HU IL MY BD IN IN PK BG HR SK SI RS LT LV EE ES ZA AL BY GB US IE ES HT IS GE MK MT KE PH'.split(' ');
+const languageCodes='en tr es pt ru de fr it ja zh ko ar hi nl pl id vi th uk fa sv da fi no el cs ro hu he ms bn ta te ur bg hr sk sl lt lv et ca af sq be cy eo ga gl ht is ka mk mt sw tl gu kn mr'.split(' ');
+const languageCountries='US TR ES BR RU DE FR IT JP CN KR SA IN NL PL ID VN TH UA IR SE DK FI NO GR CZ RO HU IL MY BD IN IN PK BG HR SK SI LT LV EE ES ZA AL BY GB US IE ES HT IS GE MK MT KE PH IN IN IN'.split(' ');
 const langDisplay=typeof Intl.DisplayNames==='function'?new Intl.DisplayNames(['tr'],{type:'language'}):null;
 const regionDisplay=typeof Intl.DisplayNames==='function'?new Intl.DisplayNames(['tr'],{type:'region'}):null;
 for(const code of languageCodes){
@@ -200,20 +200,20 @@ const imageWatcher=typeof IntersectionObserver==='function'?new IntersectionObse
   const img=entry.target, state=img._galleryState;
   if(!state)continue;
   if(entry.isIntersecting){if(!img.hasAttribute('src')&&!state.failed)state.resume();}
-  else if(img.hasAttribute('src')&&!state.failed){img.onload=null;img.onerror=null;img.removeAttribute('src');}
+  else if(img.hasAttribute('src')&&!state.failed){state.pause();img.onload=null;img.onerror=null;img.removeAttribute('src');}
  }
 },{rootMargin:'1200px 0px 1200px 0px'}):null;
 function card(item){
  const a=document.createElement('article');
  a.innerHTML='<button class="photo" aria-label="Önizlemeyi aç"><img loading="lazy" referrerpolicy="no-referrer"></button><p></p><footer><label><input type="checkbox">Seç</label><button>İndir</button></footer>';
  const img=a.querySelector('img');img.alt=item.title;
- let attempt=0,autoRetry=0,retryTimer=null;
- const state={failed:false,resume:()=>{if(!candidates.length)return;img.onerror=retry;img.onload=loaded;img.src=candidates[attempt]||candidates[0];}};
+ let attempt=0,autoRetry=0,retryTimer=null,loadTimer=null;
+ const state={failed:false,pause:()=>clearTimeout(loadTimer),resume:()=>{if(!candidates.length)return;img.onerror=retry;img.onload=loaded;clearTimeout(loadTimer);img.src=candidates[attempt]||candidates[0];loadTimer=setTimeout(()=>{if(a.isConnected&&img.hasAttribute('src'))retry();},20000);}};
  img._galleryState=state;
  const rescue='https://gallery.invalid/thumb?id='+encodeURIComponent(item.id);
  const candidates=[...new Set([item.thumb,item.url,item.fallback].filter(Boolean)),rescue];
  const retryButton=document.createElement('button');retryButton.type='button';retryButton.textContent='Önizlemeyi tekrar dene';retryButton.hidden=true;retryButton.style.cssText='display:block;width:100%;font-size:12px;border-radius:0';a.querySelector('.photo').after(retryButton);
- function retry(){if(++attempt<candidates.length){img.src=candidates[attempt];return;}
+ function retry(){clearTimeout(loadTimer);if(++attempt<candidates.length){state.resume();return;}
  img.onerror=null;img.onload=null;img.removeAttribute('src');
  if(autoRetry++<1){state.failed=true;retryTimer=setTimeout(()=>{if(!a.isConnected)return;attempt=0;state.failed=false;const rect=img.getBoundingClientRect();if(rect.bottom>=-1200&&rect.top<=window.innerHeight+1200)state.resume();},1800);return;}
  img.alt='Önizleme yok';state.failed=true;retryButton.hidden=false;
@@ -221,7 +221,7 @@ function card(item){
  retryButton.onclick=()=>{clearTimeout(retryTimer);attempt=0;autoRetry=0;state.failed=false;retryButton.hidden=true;state.resume();};
  img.onerror=retry;
  function loaded(){
-  retryButton.hidden=true;img.alt=item.title;
+  clearTimeout(loadTimer);retryButton.hidden=true;img.alt=item.title;
   if(searchState&&searchState.clean&&(img.naturalWidth<96||img.naturalHeight<96)){retry();return;}
   if(candidates[attempt]===item.url&&(!item.width||!item.height)){item.width=img.naturalWidth;item.height=img.naturalHeight;info.textContent=sources(item)+' · '+item.width+'×'+item.height;}
  }
